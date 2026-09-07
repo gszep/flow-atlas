@@ -37,13 +37,15 @@ fn inPolygon(p: vec2f) -> bool {
   return inside;
 }
 
+fn isNan(v: f32) -> bool { return (bitcast<u32>(v) & 0x7fffffffu) > 0x7f800000u; }
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
   let i = gid.x;
   var hit = 0u;
   if (i < params.count) {
     let p = vec2f(x[i], y[i]);
-    var ok = !(p.x != p.x) && !(p.y != p.y);
+    var ok = !isNan(p.x) && !isNan(p.y);
     if (ok && params.hasParent != 0u) { ok = parent[i] != 0u; }
     if (ok) {
       if (params.nverts == 0u) {

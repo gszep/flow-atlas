@@ -1,11 +1,19 @@
+import embedsomSrc from "./kernels/embedsom.wgsl?raw";
 import gateSrc from "./kernels/gate.wgsl?raw";
+import gatherSrc from "./kernels/gather.wgsl?raw";
 import setbitSrc from "./kernels/setbit.wgsl?raw";
+import somAccumulateSrc from "./kernels/som_accumulate.wgsl?raw";
+import somMapSrc from "./kernels/som_map.wgsl?raw";
 import transformSrc from "./kernels/transform.wgsl?raw";
 
 export const KERNEL_SOURCES = {
 	transform: transformSrc,
 	gate: gateSrc,
 	setbit: setbitSrc,
+	gather: gatherSrc,
+	som_accumulate: somAccumulateSrc,
+	som_map: somMapSrc,
+	embedsom: embedsomSrc,
 } as const;
 
 export type KernelName = keyof typeof KERNEL_SOURCES;

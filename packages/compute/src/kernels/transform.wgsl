@@ -9,12 +9,14 @@ struct Params { count: u32, tableLen: u32 };
 @group(0) @binding(3) var<storage, read> tableX: array<f32>;
 @group(0) @binding(4) var<storage, read> tableY: array<f32>;
 
+fn isNan(v: f32) -> bool { return (bitcast<u32>(v) & 0x7fffffffu) > 0x7f800000u; }
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
   if (i >= params.count) { return; }
   let v = input[i];
-  if (v != v) { output[i] = v; return; }
+  if (isNan(v)) { output[i] = v; return; }
   let n = params.tableLen;
   if (v <= tableX[0]) { output[i] = tableY[0]; return; }
   if (v >= tableX[n - 1u]) { output[i] = tableY[n - 1u]; return; }
