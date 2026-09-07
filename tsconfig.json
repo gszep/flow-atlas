@@ -9,6 +9,9 @@
 		},
 		{
 			"path": "packages/wsp"
+		},
+		{
+			"path": "packages/compute"
 		}
 	]
 }

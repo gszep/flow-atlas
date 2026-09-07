@@ -1,0 +1,27 @@
+{
+	"name": "@flow-atlas/compute",
+	"version": "0.0.0",
+	"type": "module",
+	"license": "MIT",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -b && cp src/kernels/*.wgsl dist/kernels/"
+	},
+	"dependencies": {
+		"@flow-atlas/transforms": "workspace:*",
+		"@flow-atlas/wsp": "workspace:*"
+	},
+	"devDependencies": {
+		"@flow-atlas/fcs": "workspace:*",
+		"@webgpu/types": "^0.1",
+		"webgpu": "^0.6.0"
+	}
+}
