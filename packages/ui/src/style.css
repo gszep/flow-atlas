@@ -83,6 +83,9 @@ input[type="range"] {
 	color: #888;
 	font-variant-numeric: tabular-nums;
 }
+#unsupported[hidden] {
+	display: none;
+}
 #unsupported {
 	position: absolute;
 	inset: 0;
