@@ -6,13 +6,18 @@ Successor to [FlowAtlas.jl](https://github.com/gszep/FlowAtlas.jl) ([paper](http
 Goal: a zero-install, WebGPU-native, open-source cytometry workspace that (Phase 1) reproduces FlowAtlas.jl
 without Julia, exposes the whole workflow to coding agents via MCP, and (Phase 2) replaces FlowJo entirely.
 
-**Status: pre-scaffold.** Start with [`docs/HANDOFF.md`](docs/HANDOFF.md).
+**Status: Phase 0.** Scaffold + `@flow-atlas/fcs` reader (tested on the 33 oracle files). Start with [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/decisions.md`](docs/decisions.md); agents read [`AGENTS.md`](AGENTS.md).
+
+```sh
+pnpm install && pnpm test
+```
 
 ## Documents
 
 | File | Purpose |
 |---|---|
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Decisions made so far, open questions, first tasks. **Read first.** |
+| [`docs/decisions.md`](docs/decisions.md) | Decision log with evidence (measured / verified / unverified) |
 | [`docs/architecture.md`](docs/architecture.md) | Target architecture, package layout, agent tool surface, phases |
 | [`docs/prior-art.md`](docs/prior-art.md) | Survey of agentic / browser / open-source cytometry tools (Sep 2026) |
 | [`docs/lessons-from-decks.md`](docs/lessons-from-decks.md) | Collaboration / provenance / MCP patterns imported from `gszep/decks` |

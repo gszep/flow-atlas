@@ -1,0 +1,103 @@
+# Decisions log
+
+Append-only. Each entry: what was decided, why, and what evidence it rests on. Mark evidence as
+**measured** (we ran it), **verified** (primary source read), or **unverified** (secondary source only).
+Earlier decisions in `HANDOFF.md` remain in force unless superseded here.
+
+## 2026-09-07 — Rendering: hand-rolled WebGPU point renderer
+
+Chosen over regl-scatterplot (WebGL2) and deck.gl WebGPU (experimental). Embedding, colour and
+visibility buffers already live on the GPU for compute; one render pipeline over the same buffers is
+zero-copy and avoids a second GPU API. Closest open precedent to study first: `apple/embedding-atlas`
+(WebGPU point rendering of millions of points; verified on GitHub, ★4.9k).
+
+## 2026-09-07 — Repo layout: pnpm workspace
+
+`packages/{fcs,wsp,transforms,compute,model,ui,host}` as in `architecture.md`. Parsers, transforms and
+model are pure TS with no browser dependency and run in Node tests.
+
+## 2026-09-07 — Kernel tests and headless compute: Dawn Node bindings (`webgpu` npm)
+
+**Measured** on this machine, Node 24.18, `webgpu@0.6.0` (published 2026-08-28, repo
+`dawn-gpu/node-webgpu`, maintained by the Dawn team):
+
+- Prebuilt binaries in the tarball for linux-x64/arm64, darwin-universal, win32-x64/arm64 (95 MB unpacked).
+  No toolchain needed. `npm i` → compute shader ran in ~2 s wall time.
+- NVIDIA RTX 5000 Ada (Vulkan): 1M-element dispatch + readback 1.9 ms. Limits: `maxStorageBufferBindingSize`
+  2 GiB, `maxBufferSize` 1 TiB. Features **did not** include `shader-f16`.
+- **Software Vulkan (Mesa llvmpipe, `mesa-vulkan-drivers` apt package)**: same test 7 ms warm / 103 ms cold,
+  selected with `create(['adapter=llvmpipe (…)'])` or `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`.
+  Limits: binding 128 MiB, buffer 4 GiB. Features included `shader-f16`, `subgroups`, `timestamp-query`.
+
+Consequences:
+1. WGSL kernel tests run in Vitest under Node with llvmpipe in GitHub Actions. Playwright is for E2E/visual
+   only (Chromium flags `--headless=new --enable-unsafe-webgpu --use-angle=swiftshader` remain the
+   documented route if ever needed; several public CI workflows use them).
+2. The studio host gets headless compute (`webgpu` as an optional dependency), so MCP `stats`/`embed`
+   work with no browser tab open. Tab-forwarding remains the fallback when the host has no GPU.
+3. Perf benchmarks are meaningless on llvmpipe (~50× slower); they run on real hardware only.
+4. Known issue: process does not exit while a reference to the `create()` result is alive — drop it in teardown.
+
+## 2026-09-07 — Compute layout: single buffer per column, dynamic offsets, ≤128 MiB windows
+
+Spec defaults (**verified**, gpuweb spec): `maxBufferSize` 256 MiB, `maxStorageBufferBindingSize` 128 MiB.
+Adapters may raise them but llvmpipe (our CI) stays at 128 MiB binding, so every kernel must operate on
+windows ≤128 MiB. Design: one `GPUBuffer` per channel column (requesting the adapter max), bound through
+dynamic bind-group offsets in fixed windows; kernels are "map over windows + reduce". Out-of-core paging
+from OPFS for datasets larger than VRAM is a documented pattern (willusher.io) and is deferred to Phase 2.
+
+Dispatch overhead, not shader throughput, is the dominant WebGPU cost (arxiv 2402.01836 and 2026
+follow-ups report 24–71 µs per dispatch in browsers; **unverified** numbers, consistent direction).
+Rule: minimise dispatches — one SOM epoch is O(1) dispatches over all windows, never one per code;
+fuse compensate→transform→gate where possible; track dispatch count in benchmarks.
+
+WGSL constraints (**verified**, WGSL spec): atomics are `u32`/`i32` only — histograms and SOM accumulation
+use integer atomics or workgroup reductions. `shader-f16` is optional and absent on some real adapters.
+
+## 2026-09-07 — Browser support policy
+
+caniuse data pulled 2026-09-07 (**verified**): Chrome/Edge ≥113 (Linux: depends on hardware/drivers);
+Firefox ≥141 default-on **only on Windows and Apple-Silicon macOS 26**; Safari default-on **only on
+macOS 26 / iOS 26**. ~84% global usage.
+
+Policy: WebGPU-only stands. The unsupported page must detect and explain (browser/OS/flag), and docs
+recommend Chrome/Edge. `device.lost` is handled by recreating the device and reloading from the OPFS cache —
+no CPU fallback.
+
+## 2026-09-07 — Files: content-hash identity, OPFS cache, no directory handles
+
+`showDirectoryPicker` is Chromium-only with formal negative positions from Mozilla and WebKit
+(**verified** caniuse; positions unverified). Workspace documents reference FCS files by
+`{sha256, basename, size}`; opening is via drag-drop / `<input webkitdirectory>` everywhere, with the
+File System Access API as a progressive enhancement. OPFS is cross-browser; large files are read/written only
+through `FileSystemSyncAccessHandle` in a Worker (never `FileReader` on whole files). Ship the PWA install
+prompt early: installed PWAs are exempt from Safari's 7-day storage eviction (unverified).
+
+## 2026-09-07 — Rust/wgpu: not now
+
+wgpu is mature (30.0.1, Aug 2026, **verified** crates.io). But the `.wgsl` kernels are the portable asset,
+not the host language; Rust would add a toolchain, wasm↔JS copy overhead, and larger bundles for no
+decided target (no CLI, no native app). Keep kernels as standalone `.wgsl` files behind a thin `GPUDevice`
+abstraction so a wgpu host could consume them later. `flow-gate-core` (Rust Gating-ML 2.0 engine with
+compliance runner, 0.1.0 Apr 2026, **verified** crates.io) is a candidate second parity oracle for Phase 2.
+
+## 2026-09-07 — Agent interface: text-first, images second
+
+`CytoGate-Bench` (GitHub `leebyounghan/cytof-qa-pipeline`, created 2026-08-30, **verified**) benchmarks
+LLM hierarchical gating step by step. A secondary source reports that plain LLM-from-text-histograms beat
+both agentic self-verification and VLM-on-screenshot variants ("gate-tightening bias"); the cited bioRxiv
+DOI did not resolve — **unverified**. Design accordingly: `describe_view` (axes, gates, density peaks,
+histograms as compact text) is the primary tool; `snapshot` PNG is secondary and returned as a resource URI,
+not base64. Tools return dense tables with size caps. Evaluate our tools on CytoGate-Bench once native gating
+exists (Phase 2).
+
+## 2026-09-07 — Testing pyramid
+
+| Layer | Tool | Where |
+|---|---|---|
+| Unit: fcs, wsp, transforms, model ops, journal | Vitest + fast-check | Node |
+| Kernel: each WGSL kernel vs its TS reference | Vitest + `webgpu` (llvmpipe) | Node, CI |
+| Parity vs FlowAtlas.jl fixtures | Vitest | Node, CI |
+| Integration: host convergence/restart/reconnect/auth | Vitest + Hocuspocus | Node, CI |
+| E2E + visual regression | Playwright (Chromium, WebGPU flags) | CI |
+| Perf: 1M/10M/50M synthetic, timestamp queries, dispatch counts | Vitest bench | real GPU only |

@@ -18,7 +18,12 @@ Written at the end of the bootstrap session in `FlowAtlas.jl` (Sep 2026). The ne
 
 Read `docs/lessons-from-decks.md` before designing `model`/`host` — it lists the collaboration, provenance, journal, hot-reloadable-tool and MCP patterns to reuse and the proven dependency set (yjs, hocuspocus, @modelcontextprotocol/server 2, zod 4).
 
-## Open — discuss with the user before committing
+## Resolved 2026-09-07 (see `decisions.md`)
+
+Renderer = hand-rolled WebGPU; layout = pnpm workspace; kernel tests + headless host compute = Dawn Node
+bindings (`webgpu` npm) with llvmpipe in CI (measured, works). The three questions below are kept for context.
+
+## Open (historical) — resolved above
 
 1. **Rendering layer.** Options: (a) `regl-scatterplot` (WebGL2, mature, 10M+ points, lasso, spatial index); (b) deck.gl WebGPU backend (experimental); (c) hand-rolled WebGPU point renderer sharing buffers with the compute kernels (zero-copy, most control, most work). Given "WebGPU is the single path", (c) or (b) is more coherent than (a); (a) would mean a WebGL2 dependency alongside WebGPU. Present trade-offs and let the user choose.
 2. **Repo layout**: single Vite app vs pnpm workspace with packages (`fcs`, `wsp`, `transforms`, `compute`, `model`, `ui`, `mcp`). Recommendation in `architecture.md` is workspace; confirm.

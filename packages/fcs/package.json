@@ -1,0 +1,18 @@
+{
+	"name": "@flow-atlas/fcs",
+	"version": "0.0.0",
+	"type": "module",
+	"license": "MIT",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -b"
+	}
+}

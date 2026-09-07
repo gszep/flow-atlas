@@ -23,18 +23,23 @@ flow-atlas/
 │  │                som_train, som_map, embedsom, quantile (for colour LUTs), reduce/count.
 │  ├─ model/        Workspace document types, operations (JSON patch-like), revisioning, validation
 │  │                (zod), serialisation (.flowatlas.json + OPFS cache for embeddings/SOM).
-│  ├─ ui/           Vite app: map view (renderer TBD), sidebar tabs (annotations / expression /
+│  ├─ ui/           Vite PWA: map view (hand-rolled WebGPU point renderer), sidebar tabs (annotations / expression /
 │  │                frequency / settings), violins, boxplots, legend (sortable groups), colourbar.
-│  └─ mcp/          MCP server (stdio + HTTP). Tools map 1:1 onto model operations + compute queries.
-│                   Runs in Node 24; talks to a running browser tab over WebSocket, or headless via
-│                   Node WebGPU for batch/CI.
+│  └─ host/         Studio host (`npx flow-atlas`): static app + Hocuspocus room + journal + MCP.
+│                   Compute headless via Dawn Node bindings (`webgpu`, optional dep) or forwarded to a tab.
 ├─ fixtures/        Parity fixtures exported from FlowAtlas.jl (see HANDOFF §First tasks)
 └─ docs/
 ```
 
 ## Data layout in GPU memory
 
-- Events stored **column-major**: one `Float32Array`/`GPUBuffer` per channel across all samples, plus a `sampleId: Uint16Array` column. Missing channels (panel merge) get a NaN column + a per-sample presence bitmask.
+See `decisions.md` (2026-09-07) for the evidence behind these rules.
+
+- Events stored **column-major**: one `GPUBuffer` per channel across all samples, plus a `sampleId: Uint16Array` column. Missing channels (panel merge) get a NaN column + a per-sample presence bitmask.
+- Buffers are bound through **dynamic bind-group offsets in fixed windows ≤128 MiB** (the spec default and llvmpipe's `maxStorageBufferBindingSize`). Every kernel is "map over windows + reduce".
+- **Minimise dispatches**: dispatch overhead dominates in browsers. One SOM epoch is O(1) dispatches over all windows; fuse compensate→transform→gate where possible.
+- Atomics are integer-only in WGSL; histograms and SOM accumulation use `u32` atomics or workgroup reductions. `shader-f16` is optional and not assumed.
+- `device.lost` → recreate device, reload from OPFS cache. No CPU fallback.
 - Labels/groups as bitmasks: `u32` per event per 32 populations (FlowAtlas.jl encoded selections as a single Int bitmask; keep the idea, widen it).
 - Embedding: `vec2<f32>` per event; kept on GPU for rendering; read back once for OPFS cache.
 
