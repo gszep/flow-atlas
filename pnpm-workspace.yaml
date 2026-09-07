@@ -2,3 +2,4 @@ packages:
   - packages/*
 allowBuilds:
   webgpu: true
+  esbuild: true

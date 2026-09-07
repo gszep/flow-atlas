@@ -6,11 +6,27 @@ Successor to [FlowAtlas.jl](https://github.com/gszep/FlowAtlas.jl) ([paper](http
 Goal: a zero-install, WebGPU-native, open-source cytometry workspace that (Phase 1) reproduces FlowAtlas.jl
 without Julia, exposes the whole workflow to coding agents via MCP, and (Phase 2) replaces FlowJo entirely.
 
-**Status: Phase 0.** Scaffold + `@flow-atlas/fcs` reader (tested on the 33 oracle files). Start with [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/decisions.md`](docs/decisions.md); agents read [`AGENTS.md`](AGENTS.md).
+**Status: Phase 1 prototype.** Loads a FlowJo workspace + FCS files entirely in the browser, transforms,
+gates (exact parity with FlowAtlas.jl), trains a SOM, embeds with EmbedSOM and renders the map on WebGPU.
+Start with [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/decisions.md`](docs/decisions.md); agents read [`AGENTS.md`](AGENTS.md).
 
 ```sh
-pnpm install && pnpm test
+pnpm install
+pnpm test          # unit + kernel (Dawn/Node) + parity tests
+pnpm dev           # http://localhost:3141 — drop the FlowAtlas.jl data/ folder, or open /?oracle to auto-load it
 ```
+
+Requires a WebGPU browser (Chrome/Edge 113+). `?oracle=N` loads the first N oracle FCS files.
+
+## Packages
+
+| Package | What |
+|---|---|
+| `packages/fcs` | FCS 2.0/3.0/3.1 reader, zero-dep |
+| `packages/transforms` | FlowJo biex/linear/log tables (bit-exact with FlowWorkspace.jl) |
+| `packages/wsp` | `.wsp` reader: samples, channels, transforms, gate DAG, groups (own XML parser) |
+| `packages/compute` | WebGPU kernels: transform, gate, labels, gather/impute, batch SOM, map, EmbedSOM |
+| `packages/ui` | Vite app: pipeline + WebGPU point renderer + legend |
 
 ## Documents
 

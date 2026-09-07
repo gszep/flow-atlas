@@ -86,3 +86,22 @@ export const dispatchSize = (count: number): number => Math.ceil(count / WORKGRO
 export function bind(buffer: GPUBuffer, w: Window, elemBytes: number): GPUBufferBinding {
 	return { buffer, offset: w.start * elemBytes, size: w.count * elemBytes };
 }
+
+/**
+ * Bind elements [start, start+count) even when `start*elemBytes` is not 256-aligned: the binding is
+ * aligned down and the remainder is returned as an element `base` for the kernel to add.
+ */
+export function bindAligned(
+	buffer: GPUBuffer,
+	start: number,
+	count: number,
+	elemBytes: number,
+): { binding: GPUBufferBinding; base: number } {
+	const byteStart = start * elemBytes;
+	const aligned = Math.floor(byteStart / 256) * 256;
+	const base = (byteStart - aligned) / elemBytes;
+	return {
+		binding: { buffer, offset: aligned, size: byteStart - aligned + count * elemBytes },
+		base,
+	};
+}

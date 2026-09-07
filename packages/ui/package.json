@@ -1,0 +1,21 @@
+{
+	"name": "@flow-atlas/ui",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsc -p tsconfig.json --noEmit && vite build",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"@flow-atlas/compute": "workspace:*",
+		"@flow-atlas/fcs": "workspace:*",
+		"@flow-atlas/transforms": "workspace:*",
+		"@flow-atlas/wsp": "workspace:*"
+	},
+	"devDependencies": {
+		"@webgpu/types": "^0.1",
+		"vite": "^7"
+	}
+}

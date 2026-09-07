@@ -101,3 +101,26 @@ exists (Phase 2).
 | Integration: host convergence/restart/reconnect/auth | Vitest + Hocuspocus | Node, CI |
 | E2E + visual regression | Playwright (Chromium, WebGPU flags) | CI |
 | Perf: 1M/10M/50M synthetic, timestamp queries, dispatch counts | Vitest bench | real GPU only |
+
+## 2026-09-07 — Prototype findings (measured)
+
+- **Gating parity is exact vs FlowWorkspace.jl** (all 32 populations of `390C_tLN_023.fcs`, fixture in
+  `fixtures/labels-390C_tLN_023.json`). Against FlowJo's own recorded counts: 332/1067 exact, 953 within 1%,
+  all within 10%; the residual is polygon gates near the biex zero region — inherited from the FlowKit biex
+  approximation and shared with the Julia oracle. All 1067 gates evaluate in ~2.2 s on the RTX (Node/Dawn).
+- Oracle data facts: biex params vary per channel (4 widths, 4 `pos`, 3 `maxRange`); 6 samples have 18
+  parameters instead of 19; compensated values exceed `$PnR` by up to ~5×.
+- **GigaSOM.jl's EmbedSOM port has a bug** (`codes[i]*codes[j]` where EmbedSOM uses `codes[j]-codes[i]`).
+  We implement the original; parity with the Julia embedding is therefore by cluster agreement only.
+- SOM training uses a strided subsample (≤500k events) per epoch with CAS float atomics; the 400×400
+  neighbourhood update is CPU-side. Embedding channels default to those with a biex transform (FlowAtlas.jl
+  embedded *all* columns including FSC/SSC/Time — a deliberate deviation).
+- **WGSL NaN**: implementations may fold `v != v` to false; use the bit-pattern test
+  `(bitcast<u32>(v) & 0x7fffffff) > 0x7f800000`.
+- Storage bindings must be 256-byte aligned; sample offsets are not. `bindAligned()` aligns down and passes
+  the remainder as a `base` uniform.
+- **Headless Chrome (SwiftShader) runs the whole compute pipeline but cannot present a WebGPU canvas**
+  (`GPU process exited unexpectedly: exit_code=133`, missing `WebgpuSwapChainTexture` backing). Playwright's
+  own launch flags also prevented adapter creation; `connectOverCDP` to a manually started Chrome works for
+  compute. E2E rendering tests need a real display/GPU (xvfb + Vulkan untested).
+- pnpm 11 uses `allowBuilds:` in `pnpm-workspace.yaml` (not `onlyBuiltDependencies`) for `webgpu`/`esbuild`.

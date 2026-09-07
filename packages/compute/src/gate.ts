@@ -1,5 +1,6 @@
 import {
 	bind,
+	bindAligned,
 	createStorage,
 	dispatchSize,
 	readback,
@@ -62,18 +63,21 @@ export async function evaluateGate(
 
 	const enc = device.createCommandEncoder({ label: "gate" });
 	for (const w of windows(g.count, 4, maxBinding)) {
-		const p = new ArrayBuffer(32);
+		const xb = bindAligned(g.x, g.xOffset + w.start, w.count, 4);
+		const yb = bindAligned(g.y, g.yOffset + w.start, w.count, 4);
+		const p = new ArrayBuffer(48);
 		const u = new Uint32Array(p, 0, 4);
 		const f = new Float32Array(p, 16, 4);
 		u.set([w.count, nverts, g.parent ? 1 : 0, 0]);
 		f.set(rect);
+		new Uint32Array(p, 32, 4).set([xb.base, yb.base, 0, 0]);
 		const params = uniform(device, new Uint32Array(p));
 		const bg = device.createBindGroup({
 			layout: pipeline.getBindGroupLayout(0),
 			entries: [
 				{ binding: 0, resource: { buffer: params } },
-				{ binding: 1, resource: bind(g.x, { start: g.xOffset + w.start, count: w.count }, 4) },
-				{ binding: 2, resource: bind(g.y, { start: g.yOffset + w.start, count: w.count }, 4) },
+				{ binding: 1, resource: xb.binding },
+				{ binding: 2, resource: yb.binding },
 				{
 					binding: 3,
 					resource: g.parent ? bind(parentBuf, w, 4) : { buffer: parentBuf },
@@ -112,19 +116,17 @@ export function setLabelBit(
 	const pipeline = k.get("setbit");
 	const enc = device.createCommandEncoder({ label: "setbit" });
 	for (const w of windows(count, 4 * words, maxBinding)) {
+		const lb = bindAligned(labels, offset + w.start, w.count, 4 * words);
 		const params = uniform(
 			device,
-			new Uint32Array([w.count, words, Math.floor(bit / 32), bit % 32]),
+			new Uint32Array([w.count, words, Math.floor(bit / 32), bit % 32, lb.base, 0, 0, 0]),
 		);
 		const bg = device.createBindGroup({
 			layout: pipeline.getBindGroupLayout(0),
 			entries: [
 				{ binding: 0, resource: { buffer: params } },
 				{ binding: 1, resource: bind(mask, w, 4) },
-				{
-					binding: 2,
-					resource: bind(labels, { start: offset + w.start, count: w.count }, 4 * words),
-				},
+				{ binding: 2, resource: lb.binding },
 			],
 		});
 		const pass = enc.beginComputePass();

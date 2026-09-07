@@ -17,6 +17,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2",
 		"@types/node": "^24",
+		"playwright": "1.63.0",
 		"typescript": "^5.9",
 		"vitest": "^4"
 	}

@@ -8,6 +8,7 @@ struct Params {
   hasParent: u32,
   _pad: u32,
   rect: vec4f,      // minx, maxx, miny, maxy (rectangle only)
+  xBase: u32, yBase: u32, _p0: u32, _p1: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -44,7 +45,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_id)
   let i = gid.x;
   var hit = 0u;
   if (i < params.count) {
-    let p = vec2f(x[i], y[i]);
+    let p = vec2f(x[params.xBase + i], y[params.yBase + i]);
     var ok = !isNan(p.x) && !isNan(p.y);
     if (ok && params.hasParent != 0u) { ok = parent[i] != 0u; }
     if (ok) {
