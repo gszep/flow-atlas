@@ -1,0 +1,22 @@
+{
+	"name": "@flow-atlas/wsp",
+	"version": "0.0.0",
+	"type": "module",
+	"license": "MIT",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -b"
+	},
+	"dependencies": {
+		"@flow-atlas/fcs": "workspace:*",
+		"@flow-atlas/transforms": "workspace:*"
+	}
+}

@@ -23,6 +23,17 @@ importers:
 
   packages/fcs: {}
 
+  packages/transforms: {}
+
+  packages/wsp:
+    dependencies:
+      '@flow-atlas/fcs':
+        specifier: workspace:*
+        version: link:../fcs
+      '@flow-atlas/transforms':
+        specifier: workspace:*
+        version: link:../transforms
+
 packages:
 
   '@biomejs/biome@2.5.12':
