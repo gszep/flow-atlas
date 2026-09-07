@@ -22,7 +22,7 @@ export function embedSomReference(
 		}
 		dist.push(Math.sqrt(s));
 	}
-	const order = dist.map((v, i) => i).sort((a, b) => (dist[a] as number) - (dist[b] as number));
+	const order = dist.map((_, i) => i).sort((a, b) => (dist[a] as number) - (dist[b] as number));
 	const idx = order.slice(0, nk);
 	const kd = idx.map((i) => dist[i] as number);
 	let mean = 0;

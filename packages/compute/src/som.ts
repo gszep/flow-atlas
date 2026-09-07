@@ -196,7 +196,7 @@ export async function trainSom(
 				const dj = sumDen[j] as number;
 				if (dj === 0) continue;
 				dsum += w * dj;
-				for (let c = 0; c < d; c++) acc[c] += w * (sumNum[j * d + c] as number);
+				for (let c = 0; c < d; c++) acc[c] = (acc[c] as number) + w * (sumNum[j * d + c] as number);
 			}
 			if (dsum > 0) for (let c = 0; c < d; c++) codes[i * d + c] = (acc[c] as number) / dsum;
 		}
