@@ -277,3 +277,65 @@ concurrency. **Measured locally:** 131 tests still pass with two workers; explic
 selecting an empty oracle directory yields two synthetic XML tests passing and
 six oracle tests skipped. Lint/typecheck pass. Remote rerun is required before
 claiming llvmpipe validation of this correction.
+
+## 2026-10-17 — Explicit conventional compensation, GPU-only numerical path
+
+**Verified convention:** FlowUtils `src/flowutils/compensate.py` on its upstream
+master branch (read 2026-10-17) compensates with
+`np.linalg.solve(spill_matrix.T, comp_data.T).T` and reverses with the row product
+`np.dot(inv_comp_data, spill_matrix)`. Source:
+https://raw.githubusercontent.com/whitews/FlowUtils/master/src/flowutils/compensate.py.
+Therefore recorded row y = true row x * S; our WGSL computes x = y * inverse(S),
+without transposing the inverse. This verifies the convention, not FlowJo native parity.
+
+`prepareCompensation(k, channelNames, spill, maxBinding)` returns an immutable,
+device-bound plan with exact-name sample indices and JSON GPU diagnostics.
+`compensateChunk(k, plan, Float32Array, maxBinding)` borrows row-major data and
+returns fresh sample-order data. A standalone setup WGSL kernel uses partial-pivot
+Gauss-Jordan inversion and evaluates both inverse-product residuals and the infinity
+condition number. A separate WGSL kernel applies the inverse to event rows. No CPU
+numerical inversion, solve, compensation, or fallback is shipped. CPU work validates
+metadata and f32 representability only. Inputs must explicitly identify participating
+channels; no detector-name heuristic or automatic application is provided. Acquisition
+scale eligibility is the caller's responsibility.
+
+**Limits/policy:** 1–128 compensated channels, square conventional matrices only;
+spectral OLS/WLS are unsupported. Duplicate/empty/missing exact channel names reject.
+Nonzero matrix coefficients that become subnormal/zero in f32, nonfinite coefficients,
+singular pivots, nonfinite setup arithmetic, condition infinity >10,000 or two-sided
+residual infinity >0.001 reject. These thresholds are conservative product safeguards,
+not a proof of biological suitability. GPU diagnostics are explicitly tagged
+`gpu-computation`, separate from imported FCS metadata. Status 1 = singular pivot,
+2 = nonfinite setup arithmetic, 3 = condition/residual rejection, 4 = nonfinite
+participating input/event arithmetic. Event numericalErrors counts failing output
+channel values in the first rejected window, not imported metadata warnings or a
+whole-file total. No partial output is returned on rejection.
+
+All matrix and staging buffers fit the caller/device limit, capped at 128 MiB;
+the square matrix must fit one binding (64 KiB at the ceiling). Event windows contain
+whole rows, obey dispatch limits, and upload/read back one window at a time. Fresh
+window buffers bind at offset zero rather than allocating a whole-chunk GPU buffer
+and binding dynamic offsets; thus even chunks larger than maxBufferSize are streamable.
+Nonparticipating channels are copied bit-for-bit; negatives and above-range values
+are not clamped. Plans retain only inverse/mapping GPU buffers and must be destroyed.
+Destroy is idempotent, rejects new work, and defers actual buffer release until all
+already-started calls finish. Each call cleans temporary buffers even on rejection.
+
+**Measured tests:** asymmetric 2x2/3x3 mixtures (including a required row swap),
+reordered/subset channels, immutable snapshots, negatives/high values, repeated and
+concurrent calls, 16-byte windows, nonparticipating NaN payload preservation, complete
+row validation, empty chunks, singular/ill-conditioned and invalid metadata rejection,
+overflow diagnostics, success/error cleanup, in-flight destroy, and the 128-channel
+ceiling. Local Dawn/Metal targeted tests pass; the 128-channel setup plus two chunks
+took about 1.4 seconds including cold shader compilation. Remote llvmpipe behavior and
+production large-file throughput remain **unverified**; no spectral or native FlowJo
+numerical parity claim is made.
+
+**Measured required validation:** Node 24.18.0/pnpm 11.16.0, isolated dependency
+setup 2.2 s; lint 0.949 s and declaration/typecheck build 1.753 s in parallel,
+then all 141 tests in 13 files passed (17.294 s command wall time). Total check
+elapsed 19.051 s, scheduling queue <0.001 s per job. At most two CPU check jobs,
+2 GiB heap per process; the full test invocation used one worker, hence one GPU
+suite at a time, after declaration outputs were ready. No UI build was required
+for this compute-only slice. Full logs and timings were retained in the session's
+approved temporary directory under `compensation-validation/`.

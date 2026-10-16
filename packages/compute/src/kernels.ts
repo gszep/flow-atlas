@@ -1,4 +1,6 @@
 import booleanSrc from "./kernels/boolean.wgsl?raw";
+import compensationSrc from "./kernels/compensation.wgsl?raw";
+import compensationInverseSrc from "./kernels/compensation_inverse.wgsl?raw";
 import embedsomSrc from "./kernels/embedsom.wgsl?raw";
 import gateSrc from "./kernels/gate.wgsl?raw";
 import gatherSrc from "./kernels/gather.wgsl?raw";
@@ -8,6 +10,8 @@ import somMapSrc from "./kernels/som_map.wgsl?raw";
 import transformSrc from "./kernels/transform.wgsl?raw";
 
 export const KERNEL_SOURCES = {
+	compensation: compensationSrc,
+	compensation_inverse: compensationInverseSrc,
 	boolean: booleanSrc,
 	transform: transformSrc,
 	gate: gateSrc,
