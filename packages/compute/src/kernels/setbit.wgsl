@@ -7,5 +7,5 @@ struct Params { count: u32, words: u32, word: u32, bit: u32, labelsBase: u32, _p
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
   if (i >= params.count) { return; }
-  if (mask[i] != 0u) { labels[(params.labelsBase + i) * params.words + params.word] |= (1u << params.bit); }
+  if (mask[i] != 0u) { labels[params.labelsBase + i * params.words + params.word] |= (1u << params.bit); }
 }

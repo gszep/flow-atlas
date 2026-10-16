@@ -124,3 +124,36 @@ exists (Phase 2).
   own launch flags also prevented adapter creation; `connectOverCDP` to a manually started Chrome works for
   compute. E2E rendering tests need a real display/GPU (xvfb + Vulkan untested).
 - pnpm 11 uses `allowBuilds:` in `pnpm-workspace.yaml` (not `onlyBuiltDependencies`) for `webgpu`/`esbuild`.
+
+## 2026-10-17 — Boolean population evaluation in the WebGPU gate pipeline
+
+- **Decision:** normalized Boolean gates use sample-local population IDs, not names/paths. AND and OR
+  accept any operand count: empty AND is the entire parent domain (all sample events at the root), empty
+  OR is empty. NOT requires exactly one operand and complements it within the parent domain. Repeated
+  operands are allowed and idempotent. These are explicit mathematical semantics, **not verified FlowJo
+  Boolean parity**; the observed AND/OR/NOT schema does not establish its edge-case behavior.
+- **Implementation:** standalone `boolean.wgsl` behind `Kernels`, exported `evaluateBooleanGate`, and
+  integration in `gateSample` before dimension lookup. One in-place GPU fold per operand/window avoids
+  limits on the number of storage bindings. The last fold intersects the parent and reduces counts;
+  no event membership is computed on the CPU. Windows respect the smaller of 128 MiB, device binding
+  limits, the requested test/window limit, and dispatch limits. Input masks start at event zero; geometric
+  column and output label slices continue to support unaligned sample offsets.
+- **Validation:** iterative topological sorting includes both ancestry and Boolean-reference edges;
+  duplicate/empty IDs, dangling references/parents, unknown Boolean operations, invalid NOT arity, and
+  cycles reject before dispatch. Later-ordered and non-leaf references work. Unsupported geometric gates
+  retain the existing skipped reporting; a Boolean gate depending on an unevaluated gate/parent rejects
+  explicitly instead of producing a misleading zero or unrestricted result.
+- **Ownership:** input buffers are borrowed. All per-gate masks remain alive for the sample evaluation,
+  including later references and label submissions. Success transfers masks only with `keepMasks`; otherwise
+  they are destroyed. Rejection destroys all produced masks even with `keepMasks`. Temporary counters,
+  uniforms, dummy masks and readback staging buffers are explicitly released. Peak mask memory remains
+  O(events × evaluated gates), as before; last-consumer reclamation/out-of-core evaluation is deferred.
+- **Compatibility:** label selection remains based on ancestry leaves, not reference dependents. Geometric
+  membership WGSL and transforms are unchanged. The gate wrapper reserves aligned-down buffer prefixes
+  to enforce binding ceilings; label bases are in u32 units so strides such as three words remain aligned.
+- **Evidence (verified locally):** synthetic Dawn GPU tests cover Boolean truth tables, parent restriction,
+  empty identities, unary NOT, multiple windows, later/non-leaf references, nested Boolean/geometric gates,
+  labels and unaligned slices, borrowed/owned buffer cleanup, malformed DAGs and a 20,000-gate chain.
+  The local regression suite passed all 86 tests, including exact Julia fixture parity and all 1067
+  geometric gates (332 exact FlowJo counts, 953 within 1%, none skipped). These geometric results are not
+  evidence of Boolean parity. GPU: Dawn/Metal, Intel UHD Graphics 630; llvmpipe was not run locally.

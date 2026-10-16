@@ -48,14 +48,17 @@ export async function readback<T extends TypedArray>(
 		size: byteLength,
 		usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
 	});
-	const enc = device.createCommandEncoder();
-	enc.copyBufferToBuffer(src, srcOffset, staging, 0, byteLength);
-	device.queue.submit([enc.finish()]);
-	await staging.mapAsync(GPUMapMode.READ);
-	const copy = staging.getMappedRange().slice(0);
-	staging.unmap();
-	staging.destroy();
-	return new ctor(copy);
+	try {
+		const enc = device.createCommandEncoder();
+		enc.copyBufferToBuffer(src, srcOffset, staging, 0, byteLength);
+		device.queue.submit([enc.finish()]);
+		await staging.mapAsync(GPUMapMode.READ);
+		const copy = staging.getMappedRange().slice(0);
+		staging.unmap();
+		return new ctor(copy);
+	} finally {
+		staging.destroy();
+	}
 }
 
 export interface Window {
