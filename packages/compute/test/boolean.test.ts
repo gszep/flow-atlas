@@ -1,5 +1,5 @@
 import type { WspGate, WspSample } from "@flow-atlas/wsp";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type BooleanOp, evaluateBooleanGate } from "../src/boolean.js";
 import { createStorage, readback, upload } from "../src/buffers.js";
 import { setLabelBit } from "../src/gate.js";
@@ -98,6 +98,10 @@ describe("normalized combined gate DAG", () => {
 });
 
 describe("Boolean GPU masks", () => {
+	// Cold software-adapter startup has its own bound; kernel assertions keep their test timeout.
+	beforeAll(async () => {
+		await getDevice();
+	}, 30_000);
 	it("labels support unaligned three-word strides across windows", async () => {
 		const { device } = await getDevice();
 		const n = 333,

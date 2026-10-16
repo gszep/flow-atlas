@@ -18,6 +18,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      - run: pnpm test --maxWorkers=2
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          # Bound nested software-renderer threads as well as Vitest workers.
+          LP_NUM_THREADS: '1'
+          NODE_OPTIONS: --max-old-space-size=2048

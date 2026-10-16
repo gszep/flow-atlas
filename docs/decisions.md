@@ -261,3 +261,19 @@ means relative error at most 1% **or** absolute difference at most two events.
 “Exact Julia fixture parity” refers to the existing single-sample count fixture,
 not event-mask identity or Boolean interoperability. The preceding entries keep
 their original wording for history; use this qualification in new reports.
+
+## 2026-10-17 — CI oracle discovery and software-GPU startup bounds
+
+**Measured CI failure:** run `38939791664` exposed an existing WSP oracle read
+inside the skipped suite's collection callback, and a new Boolean test whose
+five-second budget included cold llvmpipe adapter startup under concurrent GPU
+suites. The fixture read now runs in `beforeAll`, so absent private oracle data
+skips the six oracle assertions without preventing synthetic XML tests from running.
+
+GPU suites initialize their adapter in a separately bounded 30-second `beforeAll`
+hook. Kernel-test assertions and per-test timeouts are retained. CI uses two Vitest
+workers, one llvmpipe thread per worker, and a 2 GiB Node heap cap to bound nested
+concurrency. **Measured locally:** 131 tests still pass with two workers; explicitly
+selecting an empty oracle directory yields two synthetic XML tests passing and
+six oracle tests skipped. Lint/typecheck pass. Remote rerun is required before
+claiming llvmpipe validation of this correction.
