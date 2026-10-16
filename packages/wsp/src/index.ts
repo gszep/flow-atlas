@@ -95,8 +95,12 @@ function parseTransforms(sample: XmlElement): Record<string, TransformSpec> {
 		if (type === "biex" || type === "linear" || type === "log") {
 			out[channel] = { type, ...params } as TransformSpec;
 		} else {
-			// e.g. logicle, hyperlog, fasinh: recorded so the UI can warn; Phase 2 implements them.
-			out[channel] = { type: "linear", minRange: 0, maxRange: 262144, gain: 1 };
+			out[channel] = {
+				type: "unsupported",
+				originalType: type,
+				element: t.name,
+				attributes: { ...t.attrs },
+			};
 		}
 	}
 	return out;

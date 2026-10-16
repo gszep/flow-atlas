@@ -157,3 +157,39 @@ exists (Phase 2).
   The local regression suite passed all 86 tests, including exact Julia fixture parity and all 1067
   geometric gates (332 exact FlowJo counts, 953 within 1%, none skipped). These geometric results are not
   evidence of Boolean parity. GPU: Dawn/Metal, Intel UHD Graphics 630; llvmpipe was not run locally.
+
+## 2026-10-17 — Preserve unsupported WSP transforms; reject numerical substitution
+
+- **Decision:** `TransformSpec` gains `UnsupportedTransformSpec` (`type: "unsupported"`,
+  `originalType`, qualified XML `element`, and `attributes: Record<string, string>`). Preserve
+  case, attribute prefixes, and decoded string values without numeric coercion. These are the
+  transform element's attributes, not a lossless XML tree or a native transform implementation.
+  `readWsp` still succeeds so agents can inspect metadata before requesting computation.
+- **Failure contract:** `table` throws exported `UnsupportedTransformError`, with stable code
+  `UNSUPPORTED_TRANSFORM`, the preserved `spec`, and optional structured `context` (sample ID,
+  sample name, channel). The browser importer preflights every transform of matched samples
+  before reading FCS data or allocating GPU resources; even an unused unsupported channel in
+  a matched sample rejects rather than silently producing a partially transformed workspace.
+  Unmatched samples remain irrelevant to browser computation. Existing UI error logging displays
+  the contextual message. Lower-level GPU APIs consume tables, not transform specs.
+- **Evidence (verified):** the old WSP parser replaced every non-linear/log/biex family with
+  linear defaults. Locally read FlowJo 11.2.0 `JSONSchemas/primitives.json#/definitions/transform`
+  (SHA-256 `98ad952b6334caacf6cb37d6777f618e0c4b2aa5a5eb4206f974efc9ba51ccb1`)
+  declares fasinh, fatanh, hyperlog, logicle, and capitalization/ArcSinh/ArcTanh variants.
+  This verifies declarations only, not WSP encodings or numerical equivalence. The existing
+  local research note records the artifact integrity qualification; no target code was run.
+- **Compatibility:** supported lowercase linear/log/biex parsing and numerical implementations
+  are unchanged, as are missing-transform raw channels. Case variants and unknown future XML
+  families remain unsupported rather than being guessed equivalent. Consumers must handle the
+  added discriminant; the inspected production consumer is the browser importer, and compute
+  parity tests call the same rejecting `table` entrypoint. No dependencies or kernels changed.
+- **Regression coverage:** synthetic mixed-family imports, preservation of nonnumeric/empty/
+  namespaced attributes, JSON round trips, typed table errors and contextual messages, and
+  unchanged supported dispatch. Existing Julia fixtures and WSP/GPU oracle tests remain the
+  numerical regression authority, not evidence of native unsupported-family parity.
+- **Measured validation:** Node 24.18.0/pnpm 11.16.0; lint, typecheck, UI production build,
+  and 97 tests passed (one Vitest worker). GPU oracle results remained 1067 evaluated,
+  332 exact FlowJo counts, 953 within 1%, none skipped, on Dawn/Metal Intel UHD 630.
+  A direct Vite-loaded UI importer smoke check verified contextual rejection before any
+  file/GPU access. The initial full test run passed assertions but exited with a Vitest
+  worker-process error; an identical full rerun exited cleanly. Cause not established.

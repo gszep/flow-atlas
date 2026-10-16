@@ -35,10 +35,47 @@ export interface LogParams {
 	maxRange?: number;
 }
 
+/** Imported metadata only: no numerical semantics are assumed for this family. */
+export interface UnsupportedTransformSpec {
+	type: "unsupported";
+	/** Original, case-sensitive transform family (XML local name). */
+	originalType: string;
+	/** Original qualified XML element name, including its namespace prefix. */
+	element: string;
+	/** Original qualified attribute names and decoded string values; no numeric coercion. */
+	attributes: Record<string, string>;
+}
+
+export interface TransformContext {
+	sampleId?: string;
+	sampleName?: string;
+	channel?: string;
+}
+
+export class UnsupportedTransformError extends Error {
+	override name = "UnsupportedTransformError";
+	readonly code = "UNSUPPORTED_TRANSFORM";
+
+	constructor(
+		readonly spec: UnsupportedTransformSpec,
+		readonly context: TransformContext = {},
+	) {
+		const location = [
+			context.sampleId === undefined ? "" : `sample ID ${JSON.stringify(context.sampleId)}`,
+			context.sampleName === undefined ? "" : `sample ${JSON.stringify(context.sampleName)}`,
+			context.channel === undefined ? "" : `channel ${JSON.stringify(context.channel)}`,
+		].filter(Boolean);
+		super(
+			`Unsupported transform ${JSON.stringify(spec.originalType)} (${spec.element})${location.length ? ` for ${location.join(", ")}` : ""}; numerical evaluation is not implemented`,
+		);
+	}
+}
+
 export type TransformSpec =
 	| ({ type: "biex" } & BiexParams)
 	| ({ type: "linear" } & LinearParams)
-	| ({ type: "log" } & LogParams);
+	| ({ type: "log" } & LogParams)
+	| UnsupportedTransformSpec;
 
 /** Julia `round(Int, x)`: round half to even. */
 function roundEven(x: number): number {
@@ -159,6 +196,8 @@ export function table(spec: TransformSpec): Table {
 			return linearTable(spec);
 		case "log":
 			return logTable(spec);
+		case "unsupported":
+			throw new UnsupportedTransformError(spec);
 	}
 }
 
