@@ -1,6 +1,7 @@
 {
 	"files": [],
 	"references": [
+		{ "path": "packages/host" },
 		{
 			"path": "packages/model"
 		},

@@ -409,3 +409,44 @@ elapsed 24.561 s; Vitest reports 0 s setup, 0.568 s transform, 0.988 s import an
 14.25 s assertions. Dependency setup is reported separately above. UI build and
 absent-oracle tests ran as independent two-job checks. GPU regression was local
 Dawn/Metal Intel UHD 630, not llvmpipe or remote CI; no remote CI success claimed.
+
+## 2026-10-17 — Injectable studio analysis transport, not a second analysis backend
+
+**Decision:** `@flow-atlas/host` exposes one strict Zod operation registry and an
+injected `AnalysisService.invoke(name, args, signal?)` / `close()` contract. Both
+JSON-RPC `/rpc` and MCP `/mcp` call that contract. File authorization, conventional
+compensation, GPU resources, export jobs and receipts remain backend responsibilities;
+this adapter does not implement them, spectral unmixing, a CPU fallback, or shared
+Yjs/document/journal state. TypeScript remains the host language: no measured Rust
+advantage has been established for this transport-only slice.
+
+**Verified:** official TypeScript SDK `packages/middleware/node/src/streamableHttp.ts`
+and installed pinned v2 declarations support `NodeStreamableHTTPServerTransport`
+from `@modelcontextprotocol/node@2.1.1`, `sessionIdGenerator: undefined`,
+`enableJsonResponse: true`, and `handleRequest(req, res, parsedBody)`. A fresh
+`McpServer` (`@modelcontextprotocol/server@2.3.1`) and transport per HTTP request
+share only the injected backend. Zod 4.6.7 schemas implement Standard Schema;
+the handler cancellation signal is `ctx.mcpReq.signal`, not a v1 callback field.
+The SDK client's Streamable HTTP initialization/list/call flow is the tested
+surface, not the newer `createMcpHandler` discovery protocol or server-push SSE.
+
+**Security:** explicit trusted startup bearer token; literal loopback bind only;
+exact bound Host and optional exact Origin checks; analysis endpoints authenticate
+before parsing; 1 MiB request/JSON-response limits and bounded recursive JSON
+serialization. MCP tool payloads have a conservative 256 KiB limit for envelope
+and escaping headroom. Static built assets are explicitly configured, realpath
+confined and streamed separately. Health contains no token or paths. Backend
+`AnalysisError` fields are public and shared between RPC error.data and MCP
+isError/structuredContent.error; unexpected errors hide details. SDK pre-handler
+input-validation failures retain SDK isError text. Server close aborts HTTP calls,
+closes connections, invokes backend close once and drains outstanding work; backend
+cancellation cooperation is required. Cross-request MCP cancellation notifications
+are not supported by these request-local sessions; job cancellation is explicit.
+
+**Measured:** fake-backend HTTP integration tests exercise SDK client initialization,
+discovery, calls, shared RPC invocation, validation, typed and sanitized errors,
+authentication, Host/Origin rejection, chunked body limits, response limits,
+disconnect cancellation in both protocols, idempotent draining shutdown and static
+symlink confinement. Contract tests cover every operation, strictness, bounds and
+finite coefficients. No actual GPU device, analysis implementation, collaboration,
+or vendor numerical parity is claimed by these transport tests.
