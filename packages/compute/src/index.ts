@@ -1,5 +1,6 @@
 export * from "./boolean.js";
 export * from "./buffers.js";
+export * from "./compensation.js";
 export * from "./device.js";
 export * from "./gate.js";
 export * from "./gating.js";
