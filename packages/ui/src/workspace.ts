@@ -18,7 +18,7 @@ import {
 	uploadTable,
 } from "@flow-atlas/compute";
 import { type FcsFile, readFcs } from "@flow-atlas/fcs";
-import { type Table, table } from "@flow-atlas/transforms";
+import { type Table, table, UnsupportedTransformError } from "@flow-atlas/transforms";
 import { displayName, leafGates, readWsp, type WspSample } from "@flow-atlas/wsp";
 
 export interface SampleInfo {
@@ -61,10 +61,22 @@ export async function loadWorkspace(
 	fcsFiles: Map<string, File>,
 	progress: Progress,
 ): Promise<LoadedWorkspace> {
-	const k = new Kernels(device);
 	const ws = readWsp(wspText);
 	const samples = ws.samples.filter((s) => fcsFiles.has(s.basename));
 	if (samples.length === 0) throw new Error("no FCS files match the workspace's DataSets");
+	// Reject before file reads or GPU allocation; readWsp itself remains metadata-only.
+	for (const s of samples) {
+		for (const [channel, spec] of Object.entries(s.transforms)) {
+			if (spec.type === "unsupported") {
+				throw new UnsupportedTransformError(spec, {
+					sampleId: s.id,
+					sampleName: s.name,
+					channel,
+				});
+			}
+		}
+	}
+	const k = new Kernels(device);
 	progress(`workspace: ${ws.samples.length} samples in wsp, ${samples.length} FCS files matched`);
 
 	// Channel union by display name; populations = union of leaf gate names.
