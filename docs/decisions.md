@@ -124,3 +124,35 @@ exists (Phase 2).
   own launch flags also prevented adapter creation; `connectOverCDP` to a manually started Chrome works for
   compute. E2E rendering tests need a real display/GPU (xvfb + Vulkan untested).
 - pnpm 11 uses `allowBuilds:` in `pnpm-workspace.yaml` (not `onlyBuiltDependencies`) for `webgpu`/`esbuild`.
+
+## 2026-10-17 — Agent-first workspace definition foundation
+
+`@flow-atlas/model` owns a strict schema-v1, JSON-safe definition document and pure atomic gate
+transactions, not a UI clone, CRDT, host, journal, or numerical engine. **Verified** against the
+tracked `HANDOFF.md` / `lessons-from-decks.md` contracts: sample content-hash references, per-sample
+channels/display transforms, raw-space gate DAG, groups, and annotations belong in the document;
+event data and derived arrays do not. Existing polygon/boolean and transform types are reused
+with type-only workspace dependencies; there are zero external runtime dependencies.
+
+Transactions require `expectedRevision` and agent identity, increment once only on effective
+change, and return transient dependency invalidation IDs for a future host/cache adapter.
+Parent and boolean dependencies share an acyclic sample-local graph. Explicit cascading deletion
+also removes attached annotations; the alternative rejects dependencies. Human stamps can be
+read from trusted persistence but cannot be supplied/removed through operations. Protection
+extends conservatively to human-finalized dependents and annotations, including ancestor edits.
+Authentication, atomic disk publication, journal/revert and UI-only finalization stay adapter work.
+
+Persistence uses `null` for unbounded rectangle endpoints rather than serializing infinities.
+Unknown fields and non-JSON values are rejected (including event/results payloads); unsupported
+geometry/transform/schema/operation kinds produce explicit capability errors, never silent
+approximation. Polygon topology and numerical transform fidelity are not claimed by this layer.
+**Measured**: behavioral tests exercise roundtrip stability, batch atomicity, stale revisions,
+cycles, cascade closure, provenance protection, no-op attribution/revisions, and data-ingress
+rejection. FlowJo native numerical behavior remains **unverified** by this implementation.
+
+**Measured** oracle projection: all 33 samples / 1067 gates can be represented with per-file
+SHA-256 references and no count/event payloads. The test-only WSP projection deliberately maps
+unbounded rectangle endpoints to `null` and deduplicates sample-group membership. An initial
+projection test rejected duplicate group refs (for example Blood: 4 refs, 2 unique); the strict
+model rejects those duplicates rather than silently normalizing arbitrary input. No production
+WSP importer or numerical algorithm was changed.

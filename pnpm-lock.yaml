@@ -45,6 +45,15 @@ importers:
 
   packages/fcs: {}
 
+  packages/model:
+    dependencies:
+      '@flow-atlas/transforms':
+        specifier: workspace:*
+        version: link:../transforms
+      '@flow-atlas/wsp':
+        specifier: workspace:*
+        version: link:../wsp
+
   packages/transforms: {}
 
   packages/ui:
