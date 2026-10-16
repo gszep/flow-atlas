@@ -277,3 +277,73 @@ concurrency. **Measured locally:** 131 tests still pass with two workers; explic
 selecting an empty oracle directory yields two synthetic XML tests passing and
 six oracle tests skipped. Lint/typecheck pass. Remote rerun is required before
 claiming llvmpipe validation of this correction.
+
+## 2026-10-17 — Bounded native FCS binary streams for agent workflows
+
+**Decision:** `@flow-atlas/fcs` adds `FcsByteSource`, `blobSource`, `openFcs` and
+`writeFcs`, with no runtime dependencies. Agents can inspect `reader.metadata`
+(`Omit<FcsFile, "data">`) before pulling event-major chunks. Absolute event slices
+and bounded random-access reads avoid whole-file/prefix buffering, including
+DATA beyond 100 MB. CPU work is binary I/O only, not compensation or transforms.
+The eager `readFcs` API retains its tested historical truncation behavior; the new
+reader exposes `countPolicy: "exact-declared"` and rejects mismatched/truncated
+DATA rather than silently reducing `$TOT`. Metadata count is declared and
+extent-validated, not a claim that every external read has already succeeded.
+
+**Limits and ownership:** combined primary/supplemental encoded TEXT ≤16 MiB;
+channels ≤65,536; spill coefficients ≤2,097,152; one chunk's source bytes plus F32
+decoded bytes ≤128 MiB. JS metadata objects/strings add bounded representation
+overhead. Writer input chunks and each emitted byte array are ≤128 MiB; defaults
+target 1 MiB. No prefetch or output accumulation. Sources and input chunks are
+borrowed; stable backing storage, transport cancellation/timeouts, and retained
+output are caller responsibilities. Signals are checked at await/chunk boundaries
+but cannot interrupt an uncooperative custom `read`/iterator promise. Failed or
+abandoned exports are partial output and must not be published. See
+`packages/fcs/README.md` for the exact API/ownership and compatibility contract.
+
+**Format policy:** single-dataset list-mode FCS2.0/3.0/3.1; F/D and byte-aligned
+8/16/24/32/64-bit unsigned integers, ascending/descending byte order. Existing
+integer range masks remain binary decoding, with uint64 masking now performed
+before float conversion to preserve low bits. Shared decoder returns F32 (D/I64
+precision can be rounded). Writer emits FCS3.1 F32 little-endian, regenerates
+structural/channel fields in array order, uses zero HEADER DATA fields and TEXT
+offsets above 99,999,999, and strips stale spill aliases. Only explicit
+`metadata.spill` writes canonical `$SPILLOVER`; omitted spill prevents accidental
+double-compensation of compensated exports. Spill dimensions, names and finite
+coefficients are validated. No numerical compensation is implemented here.
+
+Nonzero amplification and non-unit gain reject export pending explicit upstream
+numerical conversion; silently changing `$PnE` would mislabel raw logarithmic
+acquisition values. This conservative gain restriction is not a limitation of the
+FCS standard. Negative/above-range float values are not clamped. Zero-event output
+has at least one channel, zero DATA offsets and no DATA bytes. UTF-8 is the explicit
+default for both readers/writer; legacy single-byte reads require `textEncoding:
+"latin1"` (WHATWG Windows-1252). Writer escapes delimiters and rejects empty/NUL
+keyword values or invalid Unicode. Historical-tool Unicode interoperability and
+other zero-event conventions are **unverified**.
+
+**Verified primary sources read:** FlowIO `src/flowio/create_fcs.py` at
+`https://raw.githubusercontent.com/whitews/FlowIO/master/src/flowio/create_fcs.py`
+documents UTF-8, inclusive offsets, zero header offsets above 99,999,999, F32 and
+zero `$PnE`. FlowUtils `src/flowutils/compensate.py` at
+`https://raw.githubusercontent.com/whitews/FlowUtils/master/src/flowutils/compensate.py`
+uses `solve(S.T, data.T).T` and inverse `data @ S`: row-major spill convention is
+recorded row `y = true row x * S`. Implementation here is independently written
+bounded I/O, not copied numerical code.
+
+**Measured locally:** Node 24.18.0, pnpm 11.16.0, isolated dependencies installed
+in 2.3 s. Lint, typecheck and all 186 tests passed; all 33 oracle FCS files match
+eager/streamed values event-by-event with 4,093-event chunks. The new 55 synthetic
+stream tests include sparse >100 MB reads, both endian orders, F/D/mixed-width I,
+uint64 masks, cancellation/cleanup, UTF-8/delimiter roundtrips, output sanitation,
+malformed spill/metadata, exact byte counts, zero events and bounded chunks.
+Absent-oracle execution passes 67 synthetic tests with two oracle tests skipped
+(3.191 s). UI production build passes (3.634 s), guarding the shared browser import.
+
+Validation used a two-job ceiling, 1 GiB Node heaps and one Vitest worker so GPU
+suites do not overlap. Queue/execution/total seconds respectively: lint
+0.004/2.025/2.029; typecheck 0.004/4.429/4.434; tests 2.030/22.530/24.560. Combined
+elapsed 24.561 s; Vitest reports 0 s setup, 0.568 s transform, 0.988 s import and
+14.25 s assertions. Dependency setup is reported separately above. UI build and
+absent-oracle tests ran as independent two-job checks. GPU regression was local
+Dawn/Metal Intel UHD 630, not llvmpipe or remote CI; no remote CI success claimed.
