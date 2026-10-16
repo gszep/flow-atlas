@@ -172,11 +172,14 @@ export function applyTransaction(
 		if (gate.author !== undefined && impacted.has(gate.id))
 			throw new ModelError("HUMAN_FINALIZED", `Human-finalized gate affected: ${gate.id}`);
 	}
+	const annotationsAfter = new Map(candidate.annotations.map((a) => [a.id, a]));
 	for (const annotation of document.annotations) {
+		// Cascading deletion can remove an annotation even if every gate is recreated unchanged.
+		const annotationChanged =
+			canonical(annotation) !== canonical(annotationsAfter.get(annotation.id) ?? null);
 		if (
 			annotation.author !== undefined &&
-			annotation.gateId !== null &&
-			impacted.has(annotation.gateId)
+			(annotationChanged || (annotation.gateId !== null && impacted.has(annotation.gateId)))
 		)
 			throw new ModelError(
 				"HUMAN_FINALIZED",

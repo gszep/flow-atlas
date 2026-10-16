@@ -442,6 +442,87 @@ describe("atomic agent transactions", () => {
 		);
 	});
 
+	it("rejects finalized annotation deletion even when its gate is identically resurrected", () => {
+		const document = workspace();
+		const originalGateDefinition = gate("g");
+		document.gates = [originalGateDefinition];
+		document.annotations = [
+			{ id: "a", gateId: "g", text: "Human final", author: "human", modified: "2026-10-17" },
+		];
+		const before = serializeWorkspace(document);
+		rejects("HUMAN_FINALIZED", () =>
+			applyTransaction(document, {
+				expectedRevision: 0,
+				agentId: "agent",
+				operations: [
+					{ type: "deleteGate", id: "g", mode: "cascade" },
+					{ type: "addGate", gate: originalGateDefinition },
+				],
+			}),
+		);
+		expect(serializeWorkspace(document)).toBe(before);
+		expect(document.revision).toBe(0);
+		expect(document).not.toHaveProperty("agentEdit");
+	});
+
+	it("rejects finalized annotation deletion after resurrecting an entire dependency closure", () => {
+		const document = dag();
+		Object.assign(at(document.annotations, 0), { author: "human", modified: "2026-10-17" });
+		const before = serializeWorkspace(document);
+		rejects("HUMAN_FINALIZED", () =>
+			applyTransaction(
+				document,
+				tx([
+					{ type: "deleteGate", id: "root", mode: "cascade" },
+					...document.gates.map((gate): GateOperation => ({ type: "addGate", gate })),
+				]),
+			),
+		);
+		expect(serializeWorkspace(document)).toBe(before);
+		expect(document.revision).toBe(0);
+	});
+
+	it("rejects resurrecting a finalized dependent gate without its human stamps", () => {
+		const document = dag();
+		const definitions = document.gates.map((gate) => ({ ...gate }));
+		Object.assign(at(document.gates, 2), { author: "human", modified: "2026-10-17" });
+		const before = serializeWorkspace(document);
+		rejects("HUMAN_FINALIZED", () =>
+			applyTransaction(
+				document,
+				tx([
+					{ type: "deleteGate", id: "root", mode: "cascade" },
+					...definitions.map((gate): GateOperation => ({ type: "addGate", gate })),
+				]),
+			),
+		);
+		expect(serializeWorkspace(document)).toBe(before);
+		expect(document.revision).toBe(0);
+	});
+
+	it("retains cascade deletion of an unstamped annotation when its gate is identically resurrected", () => {
+		const document = workspace();
+		const definition = gate("g");
+		document.gates = [definition];
+		document.annotations = [{ id: "a", gateId: "g", text: "Agent draft" }];
+		const before = serializeWorkspace(document);
+		const result = applyTransaction(
+			document,
+			tx([
+				{ type: "deleteGate", id: "g", mode: "cascade" },
+				{ type: "addGate", gate: definition },
+			]),
+		);
+		expect(result.changed).toBe(true);
+		expect(result.document.revision).toBe(1);
+		expect(result.document.agentEdit).toEqual({ agentId: "test-agent", revision: 1 });
+		expect(result.document.gates).toEqual([definition]);
+		expect(result.document.annotations).toEqual([]);
+		expect(result.deletedAnnotationIds).toEqual(["a"]);
+		expect(result.invalidatedGateIds).toEqual([]);
+		expect(serializeWorkspace(document)).toBe(before);
+	});
+
 	it("cannot forge or remove human stamps or agent attribution via operation payloads", () => {
 		for (const field of ["author", "modified", "agentEdit"]) {
 			rejects("INVALID_DOCUMENT", () =>

@@ -225,3 +225,15 @@ unbounded rectangle endpoints to `null` and deduplicates sample-group membership
 projection test rejected duplicate group refs (for example Blood: 4 refs, 2 unique); the strict
 model rejects those duplicates rather than silently normalizing arbitrary input. No production
 WSP importer or numerical algorithm was changed.
+
+## 2026-10-17 — Protect annotation net state independently of gate invalidation
+
+**Measured** regression: cascading deletion followed by identical gate recreation removed a
+human-finalized annotation without any net gate-definition change. The same bypass affected
+annotations on a completely recreated parent/boolean dependency closure. Annotation protection
+now compares each finalized annotation's own before/after state, in addition to the existing
+dependency protection; gate invalidation is not a proxy for annotation modification. Regression
+tests verify atomic rejection with the original document and revision unchanged. Resurrecting a
+finalized dependent gate without its stamps remains rejected. Explicit cascade deletion of an
+unstamped annotation remains permitted even if its gate is recreated identically: this is a
+document change with deleted-annotation reporting, not gate-definition invalidation.
