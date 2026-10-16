@@ -73,6 +73,13 @@ ancestor rename needs human intervention). Identical/net-zero edits do not creat
 or increment revision. Invalidated IDs are a transient result for future cache scheduling, not
 persisted numeric results or a durable journal.
 
+Finalized annotations are also protected by their own before/after state, independently of gate
+invalidation. Deleting a gate and recreating it identically cannot erase its finalized annotations,
+including annotations on resurrected dependents. For **unstamped** annotations, explicit cascade
+deletion still applies: recreating a gate does not recreate its annotations. Such a batch changes
+the document, increments its revision and reports deleted annotation IDs, but does not invalidate
+unchanged gate definitions.
+
 ## Persistence limits
 
 All object fields are allowlisted, including nested operation payloads. Event arrays, masks,
