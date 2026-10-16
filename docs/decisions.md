@@ -237,3 +237,27 @@ tests verify atomic rejection with the original document and revision unchanged.
 finalized dependent gate without its stamps remains rejected. Explicit cascade deletion of an
 unstamped annotation remains permitted even if its gate is recreated identically: this is a
 document change with deleted-annotation reporting, not gate-definition invalidation.
+
+## 2026-10-17 — Integrated agent-first capability wave and evidence qualification
+
+**Verified user direction:** transfer scientific and workflow capabilities into
+efficient agent operations, not FlowJo's UI layout. `docs/agent-first-roadmap.md`
+tracks the initial capability families and distinguishes implementation from
+vendor declarations and runtime compatibility. Core operations remain shared
+building blocks for a future studio/MCP adapter; no transport is claimed here.
+
+**Measured integration:** all 131 tests in 12 files, lint, root typecheck, UI
+typecheck and production build pass on Calcifer with Node 24.18.0 and pnpm 11.16.0.
+The combined check scheduler used two jobs, with one Vitest worker and serial
+GPU suites. Declaration build preceded tests because workspace imports consume
+those outputs. Lint took 1.117 s, root typecheck 2.726 s, tests 15.658 s, UI
+typecheck 2.385 s, and UI build 3.307 s (command wall times, overlapping where
+independent); total elapsed time was 18.406 s and maximum scheduling wait 0.018 s.
+Initial isolated dependency setup took 2.3 s; adding model workspace links took
+1.0 s. These are local checks, not remote CI or native FlowJo numerical validation.
+
+**Evidence correction:** historical test output described as “953 within 1%”
+means relative error at most 1% **or** absolute difference at most two events.
+“Exact Julia fixture parity” refers to the existing single-sample count fixture,
+not event-mask identity or Boolean interoperability. The preceding entries keep
+their original wording for history; use this qualification in new reports.
