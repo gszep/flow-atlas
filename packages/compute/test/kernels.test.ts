@@ -1,5 +1,5 @@
 import { biexTable, interpolate } from "@flow-atlas/transforms";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createStorage, readback, upload, windows } from "../src/buffers.js";
 import { evaluateGate } from "../src/gate.js";
 import { Kernels } from "../src/kernels.js";
@@ -20,6 +20,9 @@ describe("windows", () => {
 });
 
 describe("kernels", () => {
+	beforeAll(async () => {
+		await getDevice();
+	}, 30_000);
 	it("device", async () => {
 		const d = await getDevice();
 		console.log("GPU:", d.description, d.limits);

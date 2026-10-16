@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readback, upload } from "../src/buffers.js";
 import { Kernels } from "../src/kernels.js";
 import { embedSomReference } from "../src/reference.js";
@@ -24,6 +24,9 @@ describe("radius schedule (GigaSOM expRadius(-5), 20 epochs, 20→0.1)", () => {
 });
 
 describe("SOM + EmbedSOM on synthetic clusters", () => {
+	beforeAll(async () => {
+		await getDevice();
+	}, 30_000);
 	it("gather imputes NaN, SOM separates clusters, embedding matches reference", async () => {
 		const { device, limits } = await getDevice();
 		const k = new Kernels(device);

@@ -124,3 +124,156 @@ exists (Phase 2).
   own launch flags also prevented adapter creation; `connectOverCDP` to a manually started Chrome works for
   compute. E2E rendering tests need a real display/GPU (xvfb + Vulkan untested).
 - pnpm 11 uses `allowBuilds:` in `pnpm-workspace.yaml` (not `onlyBuiltDependencies`) for `webgpu`/`esbuild`.
+
+## 2026-10-17 — Boolean population evaluation in the WebGPU gate pipeline
+
+- **Decision:** normalized Boolean gates use sample-local population IDs, not names/paths. AND and OR
+  accept any operand count: empty AND is the entire parent domain (all sample events at the root), empty
+  OR is empty. NOT requires exactly one operand and complements it within the parent domain. Repeated
+  operands are allowed and idempotent. These are explicit mathematical semantics, **not verified FlowJo
+  Boolean parity**; the observed AND/OR/NOT schema does not establish its edge-case behavior.
+- **Implementation:** standalone `boolean.wgsl` behind `Kernels`, exported `evaluateBooleanGate`, and
+  integration in `gateSample` before dimension lookup. One in-place GPU fold per operand/window avoids
+  limits on the number of storage bindings. The last fold intersects the parent and reduces counts;
+  no event membership is computed on the CPU. Windows respect the smaller of 128 MiB, device binding
+  limits, the requested test/window limit, and dispatch limits. Input masks start at event zero; geometric
+  column and output label slices continue to support unaligned sample offsets.
+- **Validation:** iterative topological sorting includes both ancestry and Boolean-reference edges;
+  duplicate/empty IDs, dangling references/parents, unknown Boolean operations, invalid NOT arity, and
+  cycles reject before dispatch. Later-ordered and non-leaf references work. Unsupported geometric gates
+  retain the existing skipped reporting; a Boolean gate depending on an unevaluated gate/parent rejects
+  explicitly instead of producing a misleading zero or unrestricted result.
+- **Ownership:** input buffers are borrowed. All per-gate masks remain alive for the sample evaluation,
+  including later references and label submissions. Success transfers masks only with `keepMasks`; otherwise
+  they are destroyed. Rejection destroys all produced masks even with `keepMasks`. Temporary counters,
+  uniforms, dummy masks and readback staging buffers are explicitly released. Peak mask memory remains
+  O(events × evaluated gates), as before; last-consumer reclamation/out-of-core evaluation is deferred.
+- **Compatibility:** label selection remains based on ancestry leaves, not reference dependents. Geometric
+  membership WGSL and transforms are unchanged. The gate wrapper reserves aligned-down buffer prefixes
+  to enforce binding ceilings; label bases are in u32 units so strides such as three words remain aligned.
+- **Evidence (verified locally):** synthetic Dawn GPU tests cover Boolean truth tables, parent restriction,
+  empty identities, unary NOT, multiple windows, later/non-leaf references, nested Boolean/geometric gates,
+  labels and unaligned slices, borrowed/owned buffer cleanup, malformed DAGs and a 20,000-gate chain.
+  The local regression suite passed all 86 tests, including exact Julia fixture parity and all 1067
+  geometric gates (332 exact FlowJo counts, 953 within 1%, none skipped). These geometric results are not
+  evidence of Boolean parity. GPU: Dawn/Metal, Intel UHD Graphics 630; llvmpipe was not run locally.
+
+## 2026-10-17 — Preserve unsupported WSP transforms; reject numerical substitution
+
+- **Decision:** `TransformSpec` gains `UnsupportedTransformSpec` (`type: "unsupported"`,
+  `originalType`, qualified XML `element`, and `attributes: Record<string, string>`). Preserve
+  case, attribute prefixes, and decoded string values without numeric coercion. These are the
+  transform element's attributes, not a lossless XML tree or a native transform implementation.
+  `readWsp` still succeeds so agents can inspect metadata before requesting computation.
+- **Failure contract:** `table` throws exported `UnsupportedTransformError`, with stable code
+  `UNSUPPORTED_TRANSFORM`, the preserved `spec`, and optional structured `context` (sample ID,
+  sample name, channel). The browser importer preflights every transform of matched samples
+  before reading FCS data or allocating GPU resources; even an unused unsupported channel in
+  a matched sample rejects rather than silently producing a partially transformed workspace.
+  Unmatched samples remain irrelevant to browser computation. Existing UI error logging displays
+  the contextual message. Lower-level GPU APIs consume tables, not transform specs.
+- **Evidence (verified):** the old WSP parser replaced every non-linear/log/biex family with
+  linear defaults. Locally read FlowJo 11.2.0 `JSONSchemas/primitives.json#/definitions/transform`
+  (SHA-256 `98ad952b6334caacf6cb37d6777f618e0c4b2aa5a5eb4206f974efc9ba51ccb1`)
+  declares fasinh, fatanh, hyperlog, logicle, and capitalization/ArcSinh/ArcTanh variants.
+  This verifies declarations only, not WSP encodings or numerical equivalence. The existing
+  local research note records the artifact integrity qualification; no target code was run.
+- **Compatibility:** supported lowercase linear/log/biex parsing and numerical implementations
+  are unchanged, as are missing-transform raw channels. Case variants and unknown future XML
+  families remain unsupported rather than being guessed equivalent. Consumers must handle the
+  added discriminant; the inspected production consumer is the browser importer, and compute
+  parity tests call the same rejecting `table` entrypoint. No dependencies or kernels changed.
+- **Regression coverage:** synthetic mixed-family imports, preservation of nonnumeric/empty/
+  namespaced attributes, JSON round trips, typed table errors and contextual messages, and
+  unchanged supported dispatch. Existing Julia fixtures and WSP/GPU oracle tests remain the
+  numerical regression authority, not evidence of native unsupported-family parity.
+- **Measured validation:** Node 24.18.0/pnpm 11.16.0; lint, typecheck, UI production build,
+  and 97 tests passed (one Vitest worker). GPU oracle results remained 1067 evaluated,
+  332 exact FlowJo counts, 953 within 1%, none skipped, on Dawn/Metal Intel UHD 630.
+  A direct Vite-loaded UI importer smoke check verified contextual rejection before any
+  file/GPU access. The initial full test run passed assertions but exited with a Vitest
+  worker-process error; an identical full rerun exited cleanly. Cause not established.
+
+## 2026-10-17 — Agent-first workspace definition foundation
+
+`@flow-atlas/model` owns a strict schema-v1, JSON-safe definition document and pure atomic gate
+transactions, not a UI clone, CRDT, host, journal, or numerical engine. **Verified** against the
+tracked `HANDOFF.md` / `lessons-from-decks.md` contracts: sample content-hash references, per-sample
+channels/display transforms, raw-space gate DAG, groups, and annotations belong in the document;
+event data and derived arrays do not. Existing polygon/boolean and transform types are reused
+with type-only workspace dependencies; there are zero external runtime dependencies.
+
+Transactions require `expectedRevision` and agent identity, increment once only on effective
+change, and return transient dependency invalidation IDs for a future host/cache adapter.
+Parent and boolean dependencies share an acyclic sample-local graph. Explicit cascading deletion
+also removes attached annotations; the alternative rejects dependencies. Human stamps can be
+read from trusted persistence but cannot be supplied/removed through operations. Protection
+extends conservatively to human-finalized dependents and annotations, including ancestor edits.
+Authentication, atomic disk publication, journal/revert and UI-only finalization stay adapter work.
+
+Persistence uses `null` for unbounded rectangle endpoints rather than serializing infinities.
+Unknown fields and non-JSON values are rejected (including event/results payloads); unsupported
+geometry/transform/schema/operation kinds produce explicit capability errors, never silent
+approximation. Polygon topology and numerical transform fidelity are not claimed by this layer.
+**Measured**: behavioral tests exercise roundtrip stability, batch atomicity, stale revisions,
+cycles, cascade closure, provenance protection, no-op attribution/revisions, and data-ingress
+rejection. FlowJo native numerical behavior remains **unverified** by this implementation.
+
+**Measured** oracle projection: all 33 samples / 1067 gates can be represented with per-file
+SHA-256 references and no count/event payloads. The test-only WSP projection deliberately maps
+unbounded rectangle endpoints to `null` and deduplicates sample-group membership. An initial
+projection test rejected duplicate group refs (for example Blood: 4 refs, 2 unique); the strict
+model rejects those duplicates rather than silently normalizing arbitrary input. No production
+WSP importer or numerical algorithm was changed.
+
+## 2026-10-17 — Protect annotation net state independently of gate invalidation
+
+**Measured** regression: cascading deletion followed by identical gate recreation removed a
+human-finalized annotation without any net gate-definition change. The same bypass affected
+annotations on a completely recreated parent/boolean dependency closure. Annotation protection
+now compares each finalized annotation's own before/after state, in addition to the existing
+dependency protection; gate invalidation is not a proxy for annotation modification. Regression
+tests verify atomic rejection with the original document and revision unchanged. Resurrecting a
+finalized dependent gate without its stamps remains rejected. Explicit cascade deletion of an
+unstamped annotation remains permitted even if its gate is recreated identically: this is a
+document change with deleted-annotation reporting, not gate-definition invalidation.
+
+## 2026-10-17 — Integrated agent-first capability wave and evidence qualification
+
+**Verified user direction:** transfer scientific and workflow capabilities into
+efficient agent operations, not FlowJo's UI layout. `docs/agent-first-roadmap.md`
+tracks the initial capability families and distinguishes implementation from
+vendor declarations and runtime compatibility. Core operations remain shared
+building blocks for a future studio/MCP adapter; no transport is claimed here.
+
+**Measured integration:** all 131 tests in 12 files, lint, root typecheck, UI
+typecheck and production build pass on Calcifer with Node 24.18.0 and pnpm 11.16.0.
+The combined check scheduler used two jobs, with one Vitest worker and serial
+GPU suites. Declaration build preceded tests because workspace imports consume
+those outputs. Lint took 1.117 s, root typecheck 2.726 s, tests 15.658 s, UI
+typecheck 2.385 s, and UI build 3.307 s (command wall times, overlapping where
+independent); total elapsed time was 18.406 s and maximum scheduling wait 0.018 s.
+Initial isolated dependency setup took 2.3 s; adding model workspace links took
+1.0 s. These are local checks, not remote CI or native FlowJo numerical validation.
+
+**Evidence correction:** historical test output described as “953 within 1%”
+means relative error at most 1% **or** absolute difference at most two events.
+“Exact Julia fixture parity” refers to the existing single-sample count fixture,
+not event-mask identity or Boolean interoperability. The preceding entries keep
+their original wording for history; use this qualification in new reports.
+
+## 2026-10-17 — CI oracle discovery and software-GPU startup bounds
+
+**Measured CI failure:** run `38939791664` exposed an existing WSP oracle read
+inside the skipped suite's collection callback, and a new Boolean test whose
+five-second budget included cold llvmpipe adapter startup under concurrent GPU
+suites. The fixture read now runs in `beforeAll`, so absent private oracle data
+skips the six oracle assertions without preventing synthetic XML tests from running.
+
+GPU suites initialize their adapter in a separately bounded 30-second `beforeAll`
+hook. Kernel-test assertions and per-test timeouts are retained. CI uses two Vitest
+workers, one llvmpipe thread per worker, and a 2 GiB Node heap cap to bound nested
+concurrency. **Measured locally:** 131 tests still pass with two workers; explicitly
+selecting an empty oracle directory yields two synthetic XML tests passing and
+six oracle tests skipped. Lint/typecheck pass. Remote rerun is required before
+claiming llvmpipe validation of this correction.

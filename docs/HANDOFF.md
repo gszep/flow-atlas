@@ -1,5 +1,28 @@
 # Handoff
 
+## FlowJo 11 investigation (2026-10-17)
+
+See `docs/reference/flowjo-11-rea.md` for the initial REA analysis of installed FlowJo
+11.2.0: artifact fingerprints, native request schemas, renderer GraphQL operations,
+native symbol targets, repository parity gaps, and unresolved questions. Numerical
+algorithms and runtime compatibility are not yet verified. The note records local
+evidence locations and the native-decompiler setup blocker.
+
+Follow-up: Artemis's existing Ghidra installation produced 20 focused function
+decompilations after two REA whole-program startup timeouts. The investigation
+records this distinction, transfer hashes, cleanup, and remaining numerical gaps.
+
+See `docs/agent-first-roadmap.md` for the 2026-10-17 product direction: transfer
+scientific/workflow capabilities into efficient agent operations rather than
+reproduce FlowJo's UI. It tracks the first delegated implementation slices and
+distinguishes planned capabilities from delivered behavior.
+
+The first implementation wave adds `@flow-atlas/model` (revisioned metadata-only
+workspace definitions and gate transactions), windowed GPU Boolean populations,
+and explicit unsupported-transform preservation/refusal. Combined local checks:
+131 tests, lint, typecheck and UI production build passed. The studio/MCP adapter,
+durable journal/collaboration, and production WSP-to-model import remain follow-ups.
+
 Written at the end of the bootstrap session in `FlowAtlas.jl` (Sep 2026). The next agent works in this repo.
 
 ## Decisions already made (do not re-litigate)

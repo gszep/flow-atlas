@@ -1,3 +1,4 @@
+import booleanSrc from "./kernels/boolean.wgsl?raw";
 import embedsomSrc from "./kernels/embedsom.wgsl?raw";
 import gateSrc from "./kernels/gate.wgsl?raw";
 import gatherSrc from "./kernels/gather.wgsl?raw";
@@ -7,6 +8,7 @@ import somMapSrc from "./kernels/som_map.wgsl?raw";
 import transformSrc from "./kernels/transform.wgsl?raw";
 
 export const KERNEL_SOURCES = {
+	boolean: booleanSrc,
 	transform: transformSrc,
 	gate: gateSrc,
 	setbit: setbitSrc,

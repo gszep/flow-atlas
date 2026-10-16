@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { attr, gateTree, leafGates, parseXml, readWsp } from "../src/index.js";
 
 const ORACLE =
@@ -25,7 +25,10 @@ describe("xml", () => {
 });
 
 describe.skipIf(!existsSync(WSP))("oracle workspace.wsp", () => {
-	const ws = readWsp(readFileSync(WSP, "utf8"));
+	let ws: ReturnType<typeof readWsp>;
+	beforeAll(() => {
+		ws = readWsp(readFileSync(WSP, "utf8"));
+	});
 
 	it("workspace metadata", () => {
 		expect(ws.version).toBe("20.0");
