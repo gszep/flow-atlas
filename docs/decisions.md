@@ -529,3 +529,92 @@ hashes match the earlier run on the same Metal backend. This is one measured
 Node/Dawn baseline, not a Rust comparison or proof of bounded memory for the
 older full-sample gating/rendering paths. Source/build identity and complete
 measurement qualifications are in `reference/native-fcs-benchmark.md`.
+
+## 2026-10-17 — Named GPU spectral OLS with appended derived channels
+
+**Decision:** spectral unmixing is a separate explicit API, not a rectangular
+interpretation of conventional compensation. `SpectralMatrix` names detectors
+and fluorochromes independently and stores row-major F-by-D reference coefficients:
+`measured[D] = abundances[F] * reference[F,D]`. `prepareSpectralUnmixing` returns
+an immutable same-device `SpectralPlan`; `unmixChunk` returns every original input
+column followed by named fluorochrome columns and an optional named L2 residual.
+All names are nonempty/unique; detector names must match inputs exactly and derived
+names cannot collide. No first-M positional replacement, channel heuristic,
+nonnegativity clipping, WLS/WOLS, SpectralFX or FlowJo numerical parity is claimed.
+
+**Verified primary reference:** FlowUtils `compensate_spectral_ols` at pinned
+commit `b3aa2708eb25953e4e4dd9f9edcba3d503297e50`, source
+`https://raw.githubusercontent.com/whitews/FlowUtils/b3aa2708eb25953e4e4dd9f9edcba3d503297e50/src/flowutils/compensate.py`,
+uses `np.linalg.lstsq(spill_matrix.T, comp_data.T, rcond=-1)[0].T`.
+That verifies the unweighted objective/orientation only. Its positional overwrite
+of the first M channels and NumPy rank policy are deliberately not inherited.
+No Python runtime dependency or external numerical implementation was imported.
+
+**Math policy:** standalone WGSL performs all numerical preparation and event
+application. Setup normalizes by the GPU-computed largest absolute coefficient,
+then computes column-pivoted Householder QR of `A = reference.T / scale`, with
+recomputed trailing column norms and normalized Householder vectors. GPU triangular
+solves build the pseudoinverse in the declared fluorochrome order; no normal
+equations, CPU solve, or numerical fallback exists. Require `1 <= F <= D <= 128`.
+A pivot norm <=1e-6 times the initial largest column norm rejects; reported rank
+is accepted QR pivots, **not** an SVD numerical-rank estimate on failed inputs.
+Accept only `||A||inf * ||A+||inf <= 10000`, `||A+ A-I||inf <= 0.001`, and
+`||A A+ - (A A+)T||inf <= 0.001`. The latter tests orthogonality of the fitted
+projector, not zero event residual. These conservative f32 product safeguards
+are not error bounds, a 2-norm condition number, or biological suitability claims.
+Diagnostics explicitly say `source: gpu-computation` and name the algorithm,
+limits, dimensions, accepted rank, condition, setup residuals and matrix scale.
+Status 1 = rank rejection; 2 = unsafe setup arithmetic/range; 3 = condition/quality
+rejection; 4 = event error. Setup errors count once; event errors count failing
+rows in the first rejected window. Failed-setup quality metrics may be incomplete;
+unavailable/nonfinite metrics are represented by zero to keep diagnostics JSON-safe.
+
+**Precision/range policy:** coefficients must be finite normal f32 or zero (CPU
+metadata validation only). Nonzero pseudoinverse entries that become subnormal,
+zero or nonfinite on rescaling reject on the GPU. Participating nonfinite event
+values, nonfinite accumulated abundance/prediction/residual values and overflow
+reject the entire call without returning partial output. Residual L2 uses scaled
+sum-of-squares to avoid unnecessary squaring overflow. A large but finite event
+residual is QC, not an implicit rejection criterion. Derived arithmetic follows
+WebGPU f32 semantics, including possible subnormal flushing; neither negative nor
+above-range finite values are clamped. Original columns use u32 copies on GPU and
+CPU readback placement, preserving even nonparticipant NaN payloads, signed zero
+and subnormal bit patterns.
+
+**Ownership/limits:** setup's `maxBinding` is a persistent-matrix budget, distinct
+from `unmixChunk`'s event budget. Every buffer is capped by 128 MiB and actual
+device binding/buffer limits; both budgets must be integers >=32 bytes. Largest
+setup binding is D-by-D f32 (64 KiB at D=128). Event windows contain whole rows,
+bounded by both input and larger appended-output strides and dispatch limits.
+Each fresh GPU window binds at offset zero; there is no whole-chunk GPU allocation.
+The caller owns the CPU chunk input/output budget, and borrowed event data must
+remain unchanged until completion. Metadata is snapshotted before setup awaits.
+Plans retain only reference/pseudoinverse/mapping buffers; temporary resources are
+released on success and rejection. Destroy is idempotent, rejects new calls, and
+defers persistent cleanup until all already-started concurrent calls finish.
+
+**Measured locally:** Dawn/Metal tests cover asymmetric 3-by-2/4-by-2 forward
+models with independently constructed orthogonal noise, exact mixtures and pivot
+reordering, bit-preserved original columns, unequal strides/multiple windows,
+immutable snapshots, byte-offset subarrays, repeated/concurrent calls, empty data,
+names/shapes/rank/condition/range errors, large residual norms, cleanup after
+success/failure, in-flight destroy, and the full 128-by-128 ceiling with a 1 KiB
+event budget. This is synthetic mathematical validation, not NumPy execution,
+vendor parity, llvmpipe validation or large-file throughput evidence.
+
+**Required validation measured:** isolated dependency installation 5.250 s;
+Node 24.18.0 / pnpm 11.16.0. Lint (2.939 s) and declaration/typecheck build
+(6.296 s) ran in parallel, then the full suite passed 254 tests in 19 files
+(42.688 s command wall time; Vitest setup 0 s, transform 1.23 s, import 3.25 s,
+assertions 29.40 s). Total checks 48.988 s, per-job scheduling queue <0.001 s.
+At most two check jobs, 1536 MiB Node heaps, one Vitest worker/one GPU suite at
+a time; declarations precede workspace-importing tests. Logs are retained in the
+session's approved temporary directory under `spectral-validation`. These timings
+are local validation costs, not spectral-throughput measurements or remote CI.
+
+The final rerun also exercises a lowered dispatch ceiling and deletion of the
+optional residual name during asynchronous setup: **255 tests / 19 files pass**,
+including 13 spectral tests. Lint 1.005 s, incremental declaration/typecheck
+1.002 s, full test command 24.661 s; total 25.667 s, queue <0.001 s. Vitest reports
+0 s setup, 0.686 s transform, 1.74 s import and 17.44 s assertions. It reuses the
+same built workspace declarations and the same bounded scheduler policy.
