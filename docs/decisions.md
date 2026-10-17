@@ -529,3 +529,72 @@ hashes match the earlier run on the same Metal backend. This is one measured
 Node/Dawn baseline, not a Rust comparison or proof of bounded memory for the
 older full-sample gating/rendering paths. Source/build identity and complete
 measurement qualifications are in `reference/native-fcs-benchmark.md`.
+
+## 2026-10-17 — Explicit GPU acquisition linearization profile
+
+**Verified source:** FlowIO `flowdata.py` at pinned commit
+`83d28a22d42235c10d17afb017250ee208afed95`, locally read lines 250–290 and
+635–733. Its preprocessing uses `log0 * 10^(decades * stored / range) / gain`
+for positive decades, normalizes zero log0 to one, divides linear channels by
+gain, and ignores selected Time gain while multiplying Time by timestep. This
+verifies shared mathematics, not native FlowJo parity or Float64 equivalence:
+FlowIO materializes NumPy Float64; this implementation uses GPU F32 only.
+
+**Decision:** `prepareAcquisition(k, channels, options, maxBinding)` snapshots a
+device-bound immutable plan; `linearizeChunk(k, plan, data, maxBinding)` returns
+fresh row-major F32 output. It is opt-in stored→acquisition-linear conversion,
+not a display transform, compensation, or automatic import/export step. CPU work
+only validates/packs metadata and copies buffers. The standalone acquisition WGSL
+does all event arithmetic. Callers own FCS output metadata sanitation.
+
+The profile `stored-to-acquisition-linear-f32-v1` records effective F32 per-channel
+operations, normalized log0, ignored Time gain, selected Time name and resolution,
+timestep, precision and numerical policy in JSON. Names must be nonempty and
+exact-unique. Explicit `timeChannel` must resolve exactly; otherwise only a unique
+case-insensitive exact `Time` qualifies (not `Time-A` or prefixes). Ambiguity,
+logarithmic Time, linear amplification `(0, nonzero)`, and an explicitly supplied
+non-unit timestep without Time reject. Timestep defaults to one; gain, range and
+timestep must be positive finite normal F32; decades/log0 allow zero. Gain zero
+rejects, deliberately unlike FlowIO's zero-gain quirk. Time gain is validated but
+ignored. These strict policies are not claims about all historical FCS producers.
+
+Identity operations use u32 copies preserving NaN payloads, infinities, subnormal
+bits and negative zero. Transformed channels reject nonfinite/subnormal input,
+nonfinite arithmetic and nonzero subnormal intermediates/results, with guards
+before arithmetic to avoid GPU flush-to-zero/saturation hiding failures. Log
+evaluation computes decades×value, divides range, multiplies log2(10), applies
+exp2, multiplies log0, then divides gain. Its conservative exp2 exponent interval
+[-126, 127.99998] is recorded in metadata. Intermediate rejection may reject a
+mathematically representable final result; this is an explicit portable F32 safety
+policy, not a high-precision solver. Linear negatives and above-range values are
+retained; no clipping or Time correction heuristic is applied. Numerical errors
+carry JSON `source: gpu-computation`, failing-channel-value count and event bounds
+of the first rejected window, not whole-input totals. No partial result is returned.
+
+**Limits/ownership:** 1–4096 channels; 32 metadata bytes/channel, bounded separately
+at preparation by the actual caller/device binding limit. Chunk maxBinding is an
+event-window budget, not a second cap on persistent metadata. Whole-row windows
+obey 128 MiB, device storage/buffer and dispatch limits. Zero-offset window buffers
+stream input chunks larger than a single GPU buffer, as compensation does. Input
+storage is borrowed and must remain unchanged until completion. Plans permit
+concurrent same-device calls; idempotent destroy rejects new calls and defers
+persistent buffer release until active calls finish. Temporary/readback resources
+are released on success and failure. Output is accumulated only within the caller's
+chunk; callers remain responsible for chunk-level host-memory bounds.
+
+**Measured targeted evidence:** Dawn/Metal tests compare an independent test-only
+closed-form scalar reference for gain/log/time, normalized log0, negatives and
+above-range values. Coverage includes identity bit preservation, nonzero input
+byte offsets, multiwindow rows, metadata rejection, Time selection/defaults,
+nonfinite/overflow/underflow diagnostics, empty/malformed input, immutable plans,
+the 4096-channel ceiling, concurrent/in-flight destroy and allocation cleanup.
+Remote llvmpipe, native FlowJo parity and large-file throughput are unverified.
+
+**Measured required validation:** Node 24.18.0/pnpm 11.16.0, isolated dependency
+installation 4.6 s. Lint and declaration/typecheck ran concurrently (two jobs,
+2 GiB heaps), then the full suite used one worker/one GPU suite at a time because
+workspace imports consume declaration outputs. Queue/execution seconds: lint
+0.003/2.339, typecheck 0.004/6.707, tests 6.712/44.873; total 51.585 s. All 253 tests
+in 19 files passed, including 11 acquisition tests. Vitest reported setup 0 s,
+transform 1.33 s, import 4.18 s and assertions 29.30 s. Logs/timings are retained
+in the session's approved temporary directory under `acquisition-validation/`.
