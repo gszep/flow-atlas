@@ -2,6 +2,7 @@ export * from "./acquisition.js";
 export * from "./boolean.js";
 export * from "./buffers.js";
 export * from "./compensation.js";
+export * from "./control-estimator.js";
 export * from "./device.js";
 export * from "./gate.js";
 export * from "./gating.js";
