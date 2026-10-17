@@ -1,6 +1,12 @@
 import { createStorage, readback } from "./buffers.js";
 import type { Kernels } from "./kernels.js";
 
+/** Borrowed row-major F32 data and optional per-row membership. Nonzero includes.
+ * Masked and unmasked chunks may be mixed; membership is ANDed with range selection.
+ * Neither array is mutated or filtered on the CPU. Keep both immutable until iteration advances.
+ */
+export type MedianChunk = Float32Array | { data: Float32Array; mask: Uint32Array };
+
 export interface RangeSelection {
 	channel: string;
 	min: number | null;
@@ -38,7 +44,8 @@ export class MedianNumericalError extends Error {
  * Caller owns source hashing/immutability and borrowed chunks until iteration advances.
  * Chunk boundaries may differ. Row/selected counts and impossible ranks detect some,
  * not all, replay mutations. No full-population allocation or CPU event arithmetic.
- * maxBinding bounds event windows; fixed metadata/state/histograms are separately
+ * maxBinding bounds each event-data and mask binding (mask windows use 4 bytes/row);
+ * fixed metadata/state/histograms are separately
  * capped by 128 MiB/device limits (histograms use at most 256 KiB).
  * Exact endpoints include subnormals, canonicalize ±0; no rounded median mean is
  * computed and no equivalence to native MedianExact double arithmetic is claimed.
@@ -47,7 +54,7 @@ export async function summarizeMedians(
 	k: Kernels,
 	channelNames: readonly string[],
 	targets: readonly string[],
-	chunks: (pass: number) => AsyncIterable<Float32Array>,
+	chunks: (pass: number) => AsyncIterable<MedianChunk>,
 	maxBinding: number,
 	options: { selection?: readonly RangeSelection[]; signal?: AbortSignal } = {},
 ): Promise<MedianSummary> {
@@ -120,7 +127,8 @@ export async function summarizeMedians(
 		const meta = allocate(metadata.byteLength),
 			state = allocate(lanes * 8),
 			histogram = allocate(lanes * 256 * 4),
-			counts = allocate(12);
+			counts = allocate(12),
+			noMask = allocate(4);
 		device.queue.writeBuffer(meta, 0, metadata);
 		const dispatch = (name: string, buffers: GPUBuffer[], workgroups: number) => {
 			const pipeline = k.get(name);
@@ -145,20 +153,40 @@ export async function summarizeMedians(
 			let total = 0;
 			for await (const chunk of chunks(pass)) {
 				check();
-				if (!(chunk instanceof Float32Array) || chunk.length % stride !== 0)
+				if (!(chunk instanceof Float32Array) && (typeof chunk !== "object" || chunk === null))
+					throw new Error("Median input requires Float32Array data with optional Uint32Array mask");
+				const data = chunk instanceof Float32Array ? chunk : chunk.data;
+				const mask = chunk instanceof Float32Array ? undefined : chunk.mask;
+				if (!(data instanceof Float32Array) || data.length % stride !== 0)
 					throw new Error("Median input requires complete Float32Array rows");
-				total += chunk.length / stride;
+				if (
+					!(chunk instanceof Float32Array) &&
+					(!(mask instanceof Uint32Array) || mask.length !== data.length / stride)
+				)
+					throw new Error("Median mask requires a Uint32Array with exactly one element per row");
+				total += data.length / stride;
 				if (total > 0xffffffff) throw new Error("Median source exceeds u32 event-count ceiling");
-				for (let start = 0; start < chunk.length; start += rows * stride) {
+				for (let start = 0; start < data.length; start += rows * stride) {
 					check();
-					const length = Math.min(rows * stride, chunk.length - start);
-					const input = createStorage(device, length * 4);
+					const length = Math.min(rows * stride, data.length - start);
+					const input = createStorage(device, length * 4, undefined, "median.input");
+					let membership: GPUBuffer | undefined;
 					try {
+						if (mask) {
+							membership = createStorage(device, (length / stride) * 4, undefined, "median.mask");
+							device.queue.writeBuffer(
+								membership,
+								0,
+								mask.buffer,
+								mask.byteOffset + (start / stride) * 4,
+								(length / stride) * 4,
+							);
+						}
 						device.queue.writeBuffer(
 							input,
 							0,
-							chunk.buffer,
-							chunk.byteOffset + start * 4,
+							data.buffer,
+							data.byteOffset + start * 4,
 							length * 4,
 						);
 						device.queue.writeBuffer(
@@ -170,20 +198,21 @@ export async function summarizeMedians(
 								outputNames.length,
 								selection.length,
 								pass,
-								0,
+								mask ? 1 : 0,
 								0,
 								0,
 							]),
 						);
 						dispatch(
 							"median_histogram",
-							[params, input, meta, state, histogram, counts],
+							[params, input, meta, state, histogram, counts, membership ?? noMask],
 							Math.ceil(length / stride / 64),
 						);
 					} finally {
 						try {
 							await device.queue.onSubmittedWorkDone();
 						} finally {
+							membership?.destroy();
 							input.destroy();
 						}
 					}

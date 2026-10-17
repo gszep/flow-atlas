@@ -1,4 +1,4 @@
-struct Params { rows: u32, stride: u32, targets: u32, ranges: u32, digit: u32, pad0: u32, pad1: u32, pad2: u32 }
+struct Params { rows: u32, stride: u32, targets: u32, ranges: u32, digit: u32, hasMask: u32, pad1: u32, pad2: u32 }
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read> input: array<u32>;
 // Target indices followed by (channel, lower key, upper key) range triples.
@@ -7,6 +7,8 @@ struct Params { rows: u32, stride: u32, targets: u32, ranges: u32, digit: u32, p
 @group(0) @binding(4) var<storage, read_write> histogram: array<atomic<u32>>;
 // Selected rows, nonfinite target flag, impossible rank flag.
 @group(0) @binding(5) var<storage, read_write> counts: array<atomic<u32>>;
+// Window-local borrowed membership, uploaded without CPU event filtering. Dummy when hasMask=0.
+@group(0) @binding(6) var<storage, read> membership: array<u32>;
 fn finite(bits: u32) -> bool { return (bits & 0x7f800000u) != 0x7f800000u; }
 fn key(raw: u32) -> u32 {
     var bits = raw;
@@ -18,6 +20,9 @@ fn key(raw: u32) -> u32 {
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let row = id.x;
     if (row >= p.rows) { return; }
+    if (p.hasMask != 0u) {
+        if (membership[row] == 0u) { return; }
+    }
     for (var r = 0u; r < p.ranges; r++) {
         let m = p.targets + 3u * r;
         let bits = input[row * p.stride + metadata[m]];

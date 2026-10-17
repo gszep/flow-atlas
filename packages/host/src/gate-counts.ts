@@ -4,6 +4,7 @@ import {
 	type GateInput,
 	type GateResult,
 	type Kernels,
+	readback,
 	upload,
 } from "@flow-atlas/compute";
 import { type FcsFile, openFcs } from "@flow-atlas/fcs";
@@ -195,6 +196,143 @@ function rectangle(gate: Gate): GateInput["geometry"] {
 	};
 }
 
+/** Evaluate one bounded row-major chunk using the same gate recipe as count jobs.
+ * The optional membership array is a GPU readback, never CPU event filtering.
+ * All GPU buffers are owned here and released before returning the copied mask.
+ */
+export async function evaluateGateChunk(
+	k: Kernels,
+	resolved: ResolvedGateCounts,
+	data: Float32Array,
+	channelCount: number,
+	maxBinding: number,
+	signal: AbortSignal,
+	populationId?: string,
+): Promise<{ counts: number[]; mask?: Uint32Array }> {
+	signal.throwIfAborted();
+	if (
+		!Number.isSafeInteger(channelCount) ||
+		channelCount < 1 ||
+		channelCount > 4096 ||
+		!(data instanceof Float32Array) ||
+		data.length % channelCount !== 0
+	)
+		throw new AnalysisError("INVALID_GATE_CHUNK", "Gate chunks require complete F32 rows");
+	const count = data.length / channelCount;
+	const limit = Math.min(
+		maxBinding,
+		BUDGET,
+		k.device.limits.maxStorageBufferBindingSize,
+		k.device.limits.maxBufferSize,
+		k.device.limits.maxComputeWorkgroupsPerDimension * 256 * 4,
+	);
+	if (!Number.isSafeInteger(limit) || limit < 256 || count * 4 > limit)
+		throw new AnalysisError(
+			"GATE_RESOURCE_LIMIT",
+			"Gate chunk columns/masks exceed the binding budget",
+		);
+	if (resolved.channelIndices.some((index) => index < 0 || index >= channelCount))
+		throw new AnalysisError("INVALID_GATE_CHUNK", "Gate channel indices exceed the row stride");
+	if (
+		populationId !== undefined &&
+		!resolved.request.gates.some((gate) => gate.id === populationId)
+	)
+		throw new AnalysisError("INVALID_GATE_RECIPE", "Requested population does not exist");
+	if (!count)
+		return {
+			counts: resolved.request.gates.map(() => 0),
+			...(populationId === undefined ? {} : { mask: new Uint32Array(0) }),
+		};
+	const owned: GPUBuffer[] = [];
+	try {
+		const columns = new Map<string, GPUBuffer>();
+		for (let c = 0; c < resolved.channelNames.length; c++) {
+			const column = new Float32Array(count);
+			const sourceIndex = resolved.channelIndices[c] as number;
+			for (let row = 0; row < count; row++)
+				column[row] = data[row * channelCount + sourceIndex] as number;
+			const buffer = upload(k.device, column, "gate-counts.column");
+			owned.push(buffer);
+			columns.set(resolved.channelNames[c] as string, buffer);
+		}
+		const masks = new Map<string, GPUBuffer>(),
+			counts = new Map<string, number>();
+		for (const index of resolved.order) {
+			signal.throwIfAborted();
+			const gate = resolved.request.gates[index] as Gate;
+			const parent = gate.parentId === null ? null : (masks.get(gate.parentId) as GPUBuffer);
+			let result: GateResult;
+			if (gate.geometry.type === "boolean") {
+				result = await evaluateBooleanGate(
+					k,
+					{
+						op: gate.geometry.op,
+						operands: gate.geometry.refs.map((id) => masks.get(id) as GPUBuffer),
+						parent,
+						count,
+					},
+					limit,
+				);
+			} else {
+				const x = columns.get(gate.dimensions[0] as string) as GPUBuffer;
+				const y = columns.get(gate.dimensions[1] ?? (gate.dimensions[0] as string)) as GPUBuffer;
+				const base = { x, y, xOffset: 0, yOffset: 0, count, parent };
+				if (gate.geometry.type === "rectangle")
+					result = await evaluateGate(k, { ...base, geometry: rectangle(gate) }, limit);
+				else {
+					const vertices = gate.geometry.vertices;
+					const bounds = await evaluateGate(
+						k,
+						{
+							...base,
+							geometry: {
+								type: "rectangle",
+								min: [
+									Math.min(...vertices.map((v) => v[0])),
+									Math.min(...vertices.map((v) => v[1])),
+								],
+								max: [
+									Math.max(...vertices.map((v) => v[0])),
+									Math.max(...vertices.map((v) => v[1])),
+								],
+							},
+						},
+						limit,
+					);
+					try {
+						signal.throwIfAborted();
+						result = await evaluateGate(
+							k,
+							{ ...base, parent: bounds.mask, geometry: gate.geometry },
+							limit,
+						);
+					} finally {
+						bounds.mask.destroy();
+					}
+				}
+			}
+			owned.push(result.mask);
+			masks.set(gate.id, result.mask);
+			counts.set(gate.id, result.count);
+		}
+		const mask =
+			populationId === undefined
+				? undefined
+				: await readback(k.device, masks.get(populationId) as GPUBuffer, Uint32Array, count * 4);
+		signal.throwIfAborted();
+		return {
+			counts: resolved.request.gates.map((gate) => counts.get(gate.id) as number),
+			...(mask === undefined ? {} : { mask }),
+		};
+	} finally {
+		try {
+			await k.device.queue.onSubmittedWorkDone();
+		} finally {
+			for (const buffer of owned) buffer.destroy();
+		}
+	}
+}
+
 /** Hold the caller's GPU lease. One bounded chunk and one gate dispatch/readback at a time. */
 export async function runGateCounts(
 	k: Kernels,
@@ -246,87 +384,20 @@ export async function runGateCounts(
 			chunkEvents,
 			signal,
 		})) {
-			const owned: GPUBuffer[] = [];
-			try {
-				signal.throwIfAborted();
-				const columns = new Map<string, GPUBuffer>();
-				for (let c = 0; c < resolved.channelNames.length; c++) {
-					const column = new Float32Array(chunk.count);
-					const sourceIndex = resolved.channelIndices[c] as number;
-					// Layout-only copy, no event filtering or arithmetic.
-					for (let row = 0; row < chunk.count; row++)
-						column[row] = chunk.data[row * reader.metadata.channels.length + sourceIndex] as number;
-					const buffer = upload(k.device, column, "gate-counts.column");
-					owned.push(buffer);
-					columns.set(resolved.channelNames[c] as string, buffer);
-				}
-				const masks = new Map<string, GPUBuffer>();
-				for (const index of resolved.order) {
-					signal.throwIfAborted();
-					const gate = resolved.request.gates[index] as Gate;
-					const parent = gate.parentId === null ? null : (masks.get(gate.parentId) as GPUBuffer);
-					let result: GateResult;
-					if (gate.geometry.type === "boolean") {
-						result = await evaluateBooleanGate(
-							k,
-							{
-								op: gate.geometry.op,
-								operands: gate.geometry.refs.map((id) => masks.get(id) as GPUBuffer),
-								parent,
-								count: chunk.count,
-							},
-							limit,
-						);
-					} else {
-						const x = columns.get(gate.dimensions[0] as string) as GPUBuffer;
-						const y = columns.get(
-							gate.dimensions[1] ?? (gate.dimensions[0] as string),
-						) as GPUBuffer;
-						const base = { x, y, xOffset: 0, yOffset: 0, count: chunk.count, parent };
-						if (gate.geometry.type === "rectangle") {
-							result = await evaluateGate(k, { ...base, geometry: rectangle(gate) }, limit);
-						} else {
-							const vertices = gate.geometry.vertices;
-							const bounds = await evaluateGate(
-								k,
-								{
-									...base,
-									geometry: {
-										type: "rectangle",
-										min: [
-											Math.min(...vertices.map((v) => v[0])),
-											Math.min(...vertices.map((v) => v[1])),
-										],
-										max: [
-											Math.max(...vertices.map((v) => v[0])),
-											Math.max(...vertices.map((v) => v[1])),
-										],
-									},
-								},
-								limit,
-							);
-							try {
-								signal.throwIfAborted();
-								result = await evaluateGate(
-									k,
-									{ ...base, parent: bounds.mask, geometry: gate.geometry },
-									limit,
-								);
-							} finally {
-								bounds.mask.destroy();
-							}
-						}
-					}
-					owned.push(result.mask);
-					masks.set(gate.id, result.mask);
-					totals.set(gate.id, (totals.get(gate.id) as number) + result.count);
-				}
-				processed += chunk.count;
-				signal.throwIfAborted();
-				progress(chunk.count);
-			} finally {
-				for (const buffer of owned) buffer.destroy();
-			}
+			const result = await evaluateGateChunk(
+				k,
+				resolved,
+				chunk.data,
+				reader.metadata.channels.length,
+				limit,
+				signal,
+			);
+			resolved.request.gates.forEach((gate, index) => {
+				totals.set(gate.id, (totals.get(gate.id) as number) + (result.counts[index] as number));
+			});
+			processed += chunk.count;
+			signal.throwIfAborted();
+			progress(chunk.count);
 		}
 		await file.assertUnchanged();
 		signal.throwIfAborted();

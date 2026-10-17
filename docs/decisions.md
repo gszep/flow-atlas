@@ -1033,3 +1033,63 @@ one native thread were used. Existing isolated dependencies and final host/UI
 builds plus compiled RPC smoke were reused. Full logs/timings are retained under
 the approved temporary directory's `batch-count-final-validation`. Final-head
 Linux/llvmpipe CI remains required before delivery.
+
+## 2026-10-18 — Exact rank summaries for one explicit population
+
+**Decision:** add `start_population_medians` for one
+stored-F32 gate population, or an explicit root/null selection, with up to 32 named
+targets. Reuse the exact four-pass GPU radix primitive; report its two central
+rank endpoints and indices rather than silently choosing midpoint arithmetic.
+Empty support and selected nonfinite targets reject explicitly. Subnormal target
+ordering and positive-zero canonicalization retain the primitive's existing policy.
+
+The compute iterator now accepts either plain F32 rows or `{data, mask}` with one
+borrowed Uint32 membership value per row. Nonzero membership is ANDed with existing
+range filters on GPU. A seventh shader binding uses bounded per-window mask upload;
+unmasked callers use a four-byte dummy. Existing control-estimation calls remain
+plain-chunk compatible. Each mask window adds four bytes per row; this is a
+per-binding limit, not an aggregate-memory claim for arbitrary callers.
+
+The host factors existing chunk gate evaluation without changing geometric or
+Boolean semantics. Optional mask readback is copied before all owned gate buffers
+are destroyed. The median runner budgets reader-transition overlap, the larger
+gate/median phase, mask copies and 1 MiB fixed-state headroom within its explicit
+128-MiB working-buffer budget. This is not a process-RSS or driver-memory promise.
+One source descriptor stays pinned through all passes; hashes bind the recipe,
+metadata, range and gate definition. Support from every gate replay is checked
+against the median result before atomic publication.
+
+The entire supplied recipe is validated before pruning the execution plan to the
+selected population's parent/Boolean dependency closure. Reverse topological
+traversal retains all transitive prerequisites while avoiding unrelated dispatches
+on each of four passes. The original recipe remains in provenance. The 128-gate
+resource fixture uses a complete ancestor chain so this optimization does not
+reduce its exercised allocation/dispatch scope.
+
+**Verified:** independent compute and host source reviews passed. The
+compute reviewer independently passed 35 focused tests (22 masked and 13 existing
+median cases), including offset views, mixed chunk types, replay, nonfinite policy
+and cleanup. Dependency-pruning review also passed. Compiled RPC smoke verifies
+gated even-count endpoints and four-pass progress.
+
+An initial targeted E2E run exposed oracle/receipt-contract errors, adjudicated
+independently from fixture rows. S1 NOT support has 24 APC values of −1 and 12 of
+4, so both central ranks are −1; S2's NaN-PE row is excluded by the finite parent,
+leaving support three and median −1. The root receipt correctly reports 384
+event-visits, not an eventCount field. That failed assertion caused the later
+restart test to lack its job ID. Expectations were corrected in one evidence-backed
+cycle, retaining all eleven cases; no product numerical change was needed.
+
+**Final measured validation:** 417 tests in 34 files passed. Lint/typecheck ran
+concurrently (4.528/4.666 s), followed by independent host build/full tests
+(1.675/83.227 s), then compiled RPC smoke (2.831 s). Final batch elapsed 90.729 s;
+runnable queue delay <0.001 s. Vitest reports transform 1.48 s, setup 0 s, import
+6.79 s and tests 64.79 s. Existing isolated dependencies and the unchanged UI build
+were reused. There were at most two check jobs, one GPU test worker, 1536-MiB V8
+old spaces and 16-MiB semi-spaces. GPU tests/smoke were serialized on the shared
+adapter. A process-group supervisor enforced 180-s command and 90-s output-stall
+deadlines and a combined observed process-tree RSS ceiling of 4 GiB; no limit
+terminated a command. Sampled peak combined RSS was 855,519,232 bytes. These are
+validation-worker measurements, not a population-median throughput benchmark.
+Logs/timings are under the approved temporary directory's
+`population-medians-final-validation`. Final-head Linux/llvmpipe CI precedes merge.

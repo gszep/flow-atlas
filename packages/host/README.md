@@ -314,6 +314,57 @@ source and number of completed samples without publishing a partial table.
 Cancellation, restart observation and receipt retrieval use the existing job tools.
 No workspace gates or human-finalization stamps are changed.
 
+## Gated population median ranks
+
+`start_population_medians` reports exact central **rank endpoints** for 1–32 named
+channels in one explicitly selected population. Use `coordinateSpace: "stored-f32"`,
+the same gate recipe as count jobs, and `populationId` equal to a gate ID. For the
+selected source root, use `populationId: null` with an empty/omitted `gates` array.
+Optional `startEvent`/`eventCount` restrict the source window before gating.
+
+```json
+{
+  "sampleId": "<imported sample ID>",
+  "coordinateSpace": "stored-f32",
+  "populationId": "positive",
+  "channels": ["D0", "D1"],
+  "gates": [
+    {"id": "positive", "name": "Positive", "parentId": null,
+     "dimensions": ["D0"], "geometry": {"type": "rectangle", "min": [100], "max": [null]}}
+  ]
+}
+```
+
+The threshold is illustrative. `summary.count` is selected support; `lower` and
+`upper` follow `summary.channels` order. `summary.ranks` explicitly reports the
+zero-based central indices: `floor((count−1)/2)` and `floor(count/2)`. For odd counts
+the endpoints coincide. For even counts they are the two central observed values;
+**no midpoint average is computed**. These are order statistics, not confidence
+bounds or a claim of FlowJo `MedianExact` parity.
+
+The full gate recipe is validated, but only the selected gate's parent/Boolean
+dependency closure is evaluated on each pass. GPU gate membership is transferred
+as a bounded Uint32 mask and consumed by the
+GPU rank primitive. Four replay passes recompute membership against the same pinned,
+hash-verified source; each pass's gate support must agree with the rank result.
+Progress units are **event-visits**, with `progressDetail.pass` numbered 0–3.
+`summary.diagnostics.sourceRows` records source-window support before gating.
+The result also records the gate numerical policy, or null for root selection.
+
+Empty populations fail with `EMPTY_POPULATION`; selected nonfinite target values
+fail with `NONFINITE_POPULATION_TARGET`. Values outside the population do not
+invalidate its target summaries. Target subnormals retain exact F32 rank ordering;
+signed zeros canonicalize to positive zero. Gating itself retains the documented
+bounded-F32 geometry/nonfinite policy, including parent-restricted Boolean NOT.
+
+Recipes are limited to 64 KiB, source windows to 2^32−1 rows and gate definitions
+to the count-job limits. The host bounds reader, gate-mask and median-window
+allocations; it does not materialize the full population or sort events on CPU.
+`medians.json` and its receipt publish together only after complete validation.
+Use the existing job/cancellation/receipt tools; persisted observations survive
+restart. This stored-space operation does not implicitly apply acquisition,
+compensation, unmixing or display transforms, and does not edit workspace gates.
+
 ## Numerical and artifact contracts
 
 - FCS list-mode 2.0/3.0/3.1 input, strict UTF-8 TEXT, and F/I/D decoding to F32.
