@@ -271,6 +271,49 @@ exclude NaN and infinities; Boolean NOT can include those events within its pare
 Unsupported geometry, missing channels/references and cyclic dependencies reject
 before admission rather than silently skipping populations.
 
+## Batch population-count tables
+
+`start_batch_gate_counts` applies the same gate recipe to 1–32 distinct imported
+sample IDs. Each entry may provide a descriptive `label` and its own
+`startEvent`/`eventCount`. Set `coordinateSpace: "stored-f32"` and supply the same
+`gates` shape as `start_gate_counts`. The product of sample count and gate count
+must be at most 512; the whole recipe is limited to 64 KiB.
+
+```json
+{
+  "coordinateSpace": "stored-f32",
+  "samples": [
+    {"sampleId": "<first imported sample ID>", "label": "baseline"},
+    {"sampleId": "<second imported sample ID>", "label": "follow-up"}
+  ],
+  "gates": [
+    {"id": "positive", "name": "Positive", "parentId": null,
+     "dimensions": ["D0"], "geometry": {"type": "rectangle", "min": [100], "max": [null]}}
+  ]
+}
+```
+
+All source channels, dependencies and event windows are validated before admission.
+Sources execute sequentially through the same bounded GPU count runner; one batch
+occupies one job slot. Progress counts event rows across samples, with the current
+sample identified by `progressDetail`. Matching names do not imply normalized units
+or biological comparability: stored values are used explicitly, with no pooled
+counts, inferred group statistics or implicit processing.
+
+The receipt's `summary.samples` records sample identity, optional label, resolved
+event range, selected-root count and per-source recipe hash. `summary.rows` is in
+sample-major, request-gate order. Each row has zero-based `sampleIndex` and
+`gateIndex` referring to `receipt.recipe.samples` and `receipt.recipe.gates`, plus
+`count`, `parentCount`, `rootCount`, `frequencyOfParent` and `frequencyOfRoot`.
+Shared gate names/definitions are stored once rather than repeated in every row.
+Empty sample windows retain rows with zero counts and null frequencies.
+
+The complete `counts.json` table and receipt publish atomically only after every
+source succeeds and the 256 KiB response budget passes. A failure identifies the
+source and number of completed samples without publishing a partial table.
+Cancellation, restart observation and receipt retrieval use the existing job tools.
+No workspace gates or human-finalization stamps are changed.
+
 ## Numerical and artifact contracts
 
 - FCS list-mode 2.0/3.0/3.1 input, strict UTF-8 TEXT, and F/I/D decoding to F32.

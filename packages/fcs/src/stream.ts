@@ -105,7 +105,9 @@ export async function openFcs(
 		return bytes;
 	}
 	const headerBytes = await read(0, 58);
-	const h = readHeader(headerBytes.slice().buffer);
+	// Buffer.slice() is a borrowed view, unlike Uint8Array.slice(); copy the exact
+	// returned bytes so pooled Buffer sources cannot expose an unrelated prefix.
+	const h = readHeader(new Uint8Array(headerBytes).buffer);
 	if (!["FCS2.0", "FCS3.0", "FCS3.1"].includes(h.version))
 		throw new FcsError(`unsupported FCS version ${h.version}`);
 	let metadataBytes = 0;

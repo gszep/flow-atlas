@@ -135,6 +135,20 @@ function synthetic(
 }
 
 describe("bounded FCS streaming", () => {
+	it("reads pooled Buffer views without using the backing pool prefix", async () => {
+		const bytes = await output();
+		const reader = await openFcs({
+			size: bytes.length,
+			async read(offset, length) {
+				const backing = Buffer.alloc(length + 32, 0x78);
+				backing.set(bytes.subarray(offset, offset + length), 16);
+				return backing.subarray(16, 16 + length);
+			},
+		});
+		expect(reader.metadata.eventCount).toBe(3);
+		const chunks = await collect(reader.chunks({ chunkEvents: 2 }));
+		expect(chunks.flatMap((chunk) => Array.from(chunk.data))).toEqual([-4, 2, 3, 4, 5000, 6]);
+	});
 	it("roundtrips negative and above-range floats, bounds all output, and reads subsets", async () => {
 		const bytes = await output();
 		const f = await openFcs(blobSource(new Blob([bytes])));
