@@ -319,11 +319,49 @@ try {
 	const medianArtifact = JSON.parse(await readFile(join(root, medianStatus.result.path), "utf8"));
 	assert.deepEqual(medianArtifact.recipe, medianReceipt.recipe);
 	assert.deepEqual(medianArtifact.summary, medianReceipt.summary);
+	const batchMedianJob = await call("start_batch_population_medians", {
+		coordinateSpace: "stored-f32",
+		populationId: null,
+		gates: [],
+		channels: ["B"],
+		samples: [
+			{ sampleId: sample.sampleId, label: "sample" },
+			{ sampleId: controls.sampleId, label: "controls" },
+		],
+	});
+	const batchMedianDeadline = Date.now() + 20_000;
+	let batchMedianStatus;
+	do {
+		batchMedianStatus = await call("get_job", { jobId: batchMedianJob.jobId });
+		if (["succeeded", "failed", "cancelled"].includes(batchMedianStatus.state)) break;
+		if (Date.now() > batchMedianDeadline)
+			throw new Error("Batch population medians did not finish");
+		await delay(10);
+	} while (batchMedianStatus.state === "queued" || batchMedianStatus.state === "running");
+	assert.equal(batchMedianStatus.state, "succeeded", JSON.stringify(batchMedianStatus));
+	assert.equal(batchMedianStatus.processedEvents, 20);
+	assert.equal(batchMedianStatus.progressUnit, "event-visits");
+	const batchMedianReceipt = await call("get_receipt", { jobId: batchMedianJob.jobId });
+	assert.equal(batchMedianReceipt.operation, "batch-population-medians");
+	assert.equal(batchMedianReceipt.eventVisits, 20);
+	assert.deepEqual(
+		batchMedianReceipt.summary.samples.map((s) => s.count),
+		[2, 3],
+	);
+	assert.deepEqual(batchMedianReceipt.summary.rows, [
+		{ sampleIndex: 0, channelIndex: 0, lower: 0, upper: 20 },
+		{ sampleIndex: 1, channelIndex: 0, lower: 2, upper: 2 },
+	]);
+	const batchMedianArtifact = JSON.parse(
+		await readFile(join(root, batchMedianStatus.result.path), "utf8"),
+	);
+	assert.deepEqual(batchMedianArtifact.recipe, batchMedianReceipt.recipe);
+	assert.deepEqual(batchMedianArtifact.summary, batchMedianReceipt.summary);
 	console.log(
 		JSON.stringify({
 			result: "passed",
 			check:
-				"built Node studio: compensation, acquisition/OLS, control estimation, single/batch counts and gated medians",
+				"built Node studio: compensation, acquisition/OLS, control estimation, single/batch counts and median ranks",
 			inputHash: sample.sha256,
 			outputHash: status.result.sha256,
 		}),

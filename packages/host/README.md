@@ -365,6 +365,52 @@ Use the existing job/cancellation/receipt tools; persisted observations survive
 restart. This stored-space operation does not implicitly apply acquisition,
 compensation, unmixing or display transforms, and does not edit workspace gates.
 
+## Batch median-rank tables
+
+`start_batch_population_medians` reuses the same `coordinateSpace`, `populationId`,
+`gates` and `channels` contract across 1–32 distinct immutable samples. Replace
+the single `sampleId` with `samples: [{sampleId, label?, startEvent?, eventCount?}]`.
+The product of sample and target-channel counts is capped at 512 rows; the shared
+recipe remains limited to 64 KiB. All source bindings validate before admission.
+
+```json
+{
+  "coordinateSpace": "stored-f32",
+  "populationId": null,
+  "channels": ["D0", "D1"],
+  "samples": [
+    {"sampleId": "<first imported sample ID>", "label": "baseline"},
+    {"sampleId": "<second imported sample ID>", "label": "follow-up"}
+  ]
+}
+```
+
+The omitted gate list defaults to empty for this root-selection example. A gated
+batch instead supplies one common recipe and selected gate ID. Sources execute
+sequentially through the reviewed four-pass runner, using only the selected gate's
+dependency closure. There is no pooling, midpoint interpolation or automatic unit
+normalization; each source retains its own support and rank metadata.
+
+`summary.rows` contains `{sampleIndex, channelIndex, lower, upper}` in sample-major,
+requested-channel order. Indices are zero-based into `recipe.samples` and
+`summary.channels`. `summary.samples` contains identity, optional label, actual
+window, selected `count`, central `ranks`, diagnostics, gate policy and per-source
+recipe hash. Shared names and gate definitions are stored once rather than repeated
+for every endpoint row. As with single-population summaries, these endpoints are
+order statistics, not confidence bounds.
+
+Progress counts event-visits across all sources. `progressDetail` identifies the
+sample, zero-based pass and that sample's completed visits. A successful job visits
+each source-window row four times. A later empty population, selected nonfinite
+target, integrity error or cancellation prevents publication of the entire table;
+failure diagnostics retain source identity, completed-sample count and original
+cause where applicable. No null or imputed endpoints replace failed sources.
+
+The complete `medians.json` and receipt publish atomically after validation and
+the 256 KiB response-budget check. Standard job, cancellation and restart-observation
+operations apply. Compact persisted bindings avoid repeating large gate plans per
+sample. No workspace definitions or human-finalization stamps are changed.
+
 ## Numerical and artifact contracts
 
 - FCS list-mode 2.0/3.0/3.1 input, strict UTF-8 TEXT, and F/I/D decoding to F32.

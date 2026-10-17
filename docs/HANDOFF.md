@@ -1,5 +1,16 @@
 # Handoff
 
+## Batch median-rank tables (2026-10-18)
+
+`start_batch_population_medians` applies one stored-F32 population/channel recipe
+to 1–32 distinct immutable samples, returning at most 512 indexed sample/channel
+endpoint rows. Support, central ranks and diagnostics remain per sample. Existing
+empty/nonfinite rejection and atomic publication policies are retained; no pooling
+or midpoint calculation is introduced. Source review and all 432 local tests passed,
+including 15 new cases covering both 16×32 and 32×16 boundaries, source failures,
+cancellation and restart. Lint/typecheck, host build and compiled RPC smoke pass.
+Final-head Linux CI is required before merge.
+
 ## Gated median-rank summaries (2026-10-18)
 
 `start_population_medians` selects one stored-F32 gate population (or explicit
@@ -11,7 +22,8 @@ Endpoints are not averaged and are not confidence bounds or vendor parity claims
 Independent compute, host and dependency-pruning reviews passed. Final local checks
 passed 417 tests in 34 files, lint/typecheck, host/UI builds and compiled gated-median
 RPC smoke. All eleven new E2E cases remain, plus eight host invariants and 22 masked
-primitive cases. Final-head Linux CI is required before merge.
+primitive cases. Final-head Linux CI `39046514475` passed 374 tests with ten
+private-oracle skips; PR #8 merged at `af0ef28`.
 
 ## Batch population counts (2026-10-17)
 

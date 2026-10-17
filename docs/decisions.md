@@ -1093,3 +1093,43 @@ terminated a command. Sampled peak combined RSS was 855,519,232 bytes. These are
 validation-worker measurements, not a population-median throughput benchmark.
 Logs/timings are under the approved temporary directory's
 `population-medians-final-validation`. Final-head Linux/llvmpipe CI precedes merge.
+
+## 2026-10-18 — Bounded batch median-rank tables
+
+**Decision:** reuse the reviewed one-population median
+runner sequentially across 1–32 distinct immutable sample identities. A common
+stored-F32 population, gate recipe and target-channel list bind per-source windows;
+the sample/channel table is limited to 512 rows and the request to 64 KiB.
+Counts, central ranks, diagnostics and source recipe hashes stay per sample;
+endpoint rows carry only sample/channel indices and lower/upper values.
+
+All metadata binds before admission. The batch hash includes source metadata,
+range and execution-plan hashes. Compact durable bindings avoid serializing the
+full gate recipe repeatedly. Publication reuses the shared population executor,
+with median artifacts and event-visit progress for both single and batch ranks.
+No new compute kernel, pooled statistic, midpoint convention or workspace edit
+is introduced. Any empty/nonfinite source, source integrity failure or cancellation
+rejects the whole table; completed source rows are not published as partial success.
+
+**Verified:** independent source review passed. All 15 focused host tests
+pass, including reordered physical channels, explicit windows, both 512-row shapes,
+a 47,898-byte shared recipe whose expanded bindings exceed 1 MiB, bounded MCP
+retrieval/restart, immutable admission, later-source empty/nonfinite/removal/
+corruption, second-source replay cancellation and recovery after terminal-record
+write failure following successful publication.
+
+**Final measured validation:** all 432 tests in 37 files passed. Lint/typecheck ran
+concurrently (2.384/1.450 s), followed by independent host build/full tests
+(1.175/68.448 s), then compiled RPC smoke (2.331 s). Final batch elapsed 73.169 s;
+runnable queue delay <0.001 s. Vitest reports transform 0.957 s, setup 0 s, import
+4.89 s and tests 54.96 s. Existing isolated dependencies were reused, and the final
+host artifact was built once and reused for smoke. This host-only change did not
+repeat the unchanged UI build. At most two check jobs used 1536-MiB old spaces,
+16-MiB semi-spaces and one GPU test worker. GPU suites/smoke were serialized on the
+shared adapter. The process-group supervisor enforced 180-s command and 90-s
+output-stall deadlines and a 4-GiB observed combined process-tree RSS ceiling;
+sampled peak was 825,651,200 bytes and no limit terminated a command. Its owned
+temporary fixture tree was removed after process cleanup. These are validation
+measurements, not a cohort throughput benchmark. Logs/timings are retained under
+the approved temporary directory's `batch-medians-final-validation`. Final-head
+Linux/llvmpipe CI remains required before merge.
