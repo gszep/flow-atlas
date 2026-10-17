@@ -899,3 +899,55 @@ the immutable host build was reused by smoke. Logs/timings are under the session
 approved temporary directory at `control-final-validation`. Remote final-head CI
 remains required before merge; no large-file control-estimation benchmark or
 native numerical parity is claimed.
+
+## 2026-10-17 — Streamed raw-coordinate population count jobs
+
+**Decision:** the next bounded agent capability is
+`start_gate_counts`, taking immutable sample identity, an explicit `stored-f32`
+coordinate space, an optional event window and a rectangle/polygon/Boolean gate
+recipe. It computes counts through GPU gates in bounded windows and exposes both
+parent and selected-root denominators. CPU aggregation is restricted to exact
+integer GPU window counts and derived scalar frequency ratios; event membership
+remains GPU-only. Zero denominators yield null frequencies.
+
+This job evaluates a recipe without mutating the workspace document. Display
+transforms, inferred gates and implicit acquisition/compensation are excluded from
+this contract. A previously processed FCS artifact may be imported explicitly and
+counted in its stored coordinate space. Gate definitions and input hashes are
+snapshotted in the receipt; named kernel semantics do not establish vendor parity.
+
+Reuse the host's bounded queue, cancellation and atomic artifact/receipt publication.
+Recipes are capped at 64 KiB, 128 gates and 256 vertices per polygon; protocol
+evidence must fit MCP's 256 KiB budget before publication. Implementation and
+independent validation must establish effective chunk/mask memory bounds before
+delivery. The runner conservatively sizes chunks for decoded/encoded rows, copied
+columns, every retained mask and temporary polygon masks within 128 MiB.
+
+Geometry requires exact normal-or-zero F32 coordinates. Null rectangle bounds
+become exact finite F32 extrema, rather than the legacy kernel's narrower fallback
+sentinels. Polygon vertices are bounded by 2^30 and nonhorizontal |dy| by a minimum
+2^-30; GPU bounding-box prefiltering bounds event coordinates before crossing
+arithmetic. F32 rounding and permitted subnormal flushing remain explicit. Geometric
+gates exclude nonfinite inputs; NOT may include them within its parent domain.
+No display-space parity measurement is transferred to this raw-space profile.
+
+**Source review verified:** raw coordinate conversion, bounded polygon arithmetic,
+parent/Boolean dependency ordering, denominator semantics, chunk/mask accounting,
+cleanup, cancellation and durable publication passed independent review.
+
+**Measured/verified validation:** 360 tests in 28 files passed, including nineteen
+new protocol, numerical and durability cases. Fixtures verify multi-chunk totals,
+shuffled parent/Boolean DAGs, zero denominators, exact F32 extrema, nonfinite/NOT
+behavior, bounded polygon coordinates, malformed recipe admission, cancellation,
+MCP/restart recovery and publication surviving terminal-record persistence failure.
+Host/UI builds and compiled RPC smoke passed. The latter reuses the unchanged
+host artifact; no new computational runtime dependency was added.
+
+Final checks ran at most two jobs with 1536 MiB heaps, one GPU test worker and one
+native thread. Lint/typecheck ran concurrently (3.166/3.281 s), then the full suite
+(64.327 s command wall); final batch elapsed 67.619 s, runnable queue delay ≤0.006 s.
+Vitest reports transform 1.71 s, setup 0 s, import 5.69 s and tests 45.82 s. Isolated
+dependency setup took 3.9 s before this batch. Logs/timings are retained under the
+approved temporary directory's `gate-count-final-validation`. These are validation
+costs, not a large-file throughput benchmark or native/vendor parity measurement.
+Final-head Linux/llvmpipe CI remains required before merge.

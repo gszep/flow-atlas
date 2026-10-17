@@ -60,6 +60,31 @@ const controlPopulation = z.strictObject({
 		.max(16)
 		.optional(),
 });
+const populationGate = z.strictObject({
+	id: z.string().min(1).max(128),
+	name: z.string().min(1).max(256),
+	parentId: z.string().min(1).max(128).nullable(),
+	dimensions: z.array(z.string().min(1).max(256)).max(2),
+	geometry: z.discriminatedUnion("type", [
+		z.strictObject({
+			type: z.literal("rectangle"),
+			min: z.array(z.number().finite().nullable()).min(1).max(2),
+			max: z.array(z.number().finite().nullable()).min(1).max(2),
+		}),
+		z.strictObject({
+			type: z.literal("polygon"),
+			vertices: z
+				.array(z.tuple([z.number().finite(), z.number().finite()]))
+				.min(3)
+				.max(256),
+		}),
+		z.strictObject({
+			type: z.literal("boolean"),
+			op: z.enum(["and", "or", "not"]),
+			refs: z.array(z.string().min(1).max(128)).min(1).max(128),
+		}),
+	]),
+});
 export const operationSchemas = {
 	list_capabilities: z.strictObject({}),
 	import_fcs: z.strictObject({ path: z.string().min(1) }),
@@ -153,6 +178,13 @@ export const operationSchemas = {
 		minPrimarySeparation: z.number().finite().nonnegative().optional(),
 	}),
 	get_job: z.strictObject({ jobId: id }),
+	start_gate_counts: z.strictObject({
+		sampleId: id,
+		coordinateSpace: z.literal("stored-f32"),
+		startEvent: index.optional(),
+		eventCount: index.optional(),
+		gates: z.array(populationGate).min(1).max(128),
+	}),
 	cancel_job: z.strictObject({ jobId: id }),
 	get_receipt: z.strictObject({ jobId: id }),
 } as const;

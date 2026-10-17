@@ -36,6 +36,7 @@ import {
 	resolveControls,
 	runControlEstimation,
 } from "./control-estimation.js";
+import { type ResolvedGateCounts, resolveGateCounts, runGateCounts } from "./gate-counts.js";
 import {
 	type InputContext,
 	inputContext,
@@ -79,7 +80,7 @@ interface ExportRequest extends ProcessingRequest {
 	outputName?: string | undefined;
 }
 interface Job {
-	kind?: "fcs-export" | "control-estimation";
+	kind?: "fcs-export" | "control-estimation" | "gate-counts";
 	id: string;
 	state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
 	phase: string;
@@ -93,6 +94,7 @@ interface Job {
 	plannedUnmixing?: SpectralDefinition;
 	inputContext: InputContext;
 	estimation?: ResolvedControls;
+	gateCounts?: ResolvedGateCounts;
 	controlEvidence?: PopulationResult[];
 	controlCandidate?: Pick<ControlResult, "channels" | "matrix" | "estimationDiagnostics">;
 	progressDetail?: { populationId: string; pass: number };
@@ -261,6 +263,8 @@ class FcsAnalysis implements AnalysisService {
 						outputs: "appended fluorochromes and optional L2 residual",
 					},
 					limits: {
+						maxGateVertices: 256,
+						maxCountGates: 128,
 						maxControlDetectors: 32,
 						chunkBytes: this.chunkBytes,
 						maxCompensatedChannels: 128,
@@ -275,6 +279,13 @@ class FcsAnalysis implements AnalysisService {
 						maxUnmixingDefinitions: 128,
 						previewEvents: 100,
 						previewChannels: 32,
+					},
+					populationCounts: {
+						coordinateSpace: "stored-f32",
+						geometry: ["rectangle", "polygon", "boolean"],
+						denominators: ["selected-root", "parent"],
+						zeroDenominatorFrequency: null,
+						workspaceEdits: false,
 					},
 					unsupported: [
 						"weighted spectral WLS/WOLS and SpectralFX",
@@ -563,6 +574,42 @@ class FcsAnalysis implements AnalysisService {
 					await handle.close();
 				}
 			}
+			case "start_gate_counts": {
+				const request = operationSchemas.start_gate_counts.parse(input);
+				const sample = await this.sample(request.sampleId, signal);
+				const resolved = resolveGateCounts(request, sample.metadata);
+				signal.throwIfAborted();
+				if (this.queue.length + this.pendingJobs >= 16)
+					throw new AnalysisError("QUEUE_FULL", "Analysis queue is full");
+				this.pendingJobs++;
+				const job: Job = {
+					kind: "gate-counts",
+					id: randomUUID(),
+					state: "queued",
+					phase: "queued",
+					processedEvents: 0,
+					totalEvents: resolved.eventCount,
+					createdAt: new Date().toISOString(),
+					enqueuedAt: performance.now(),
+					request: { sampleId: request.sampleId },
+					inputContext: { inputSpace: "stored" },
+					gateCounts: resolved,
+					abort: new AbortController(),
+				};
+				try {
+					await this.store.saveRun(job.id, { ...this.jobRecord(job), gateCounts: resolved });
+					signal.throwIfAborted();
+					this.jobs.set(job.id, job);
+					this.queue.push(job);
+					queueMicrotask(() => this.pump());
+					return this.jobRecord(job);
+				} catch (error) {
+					await rm(join(this.store.runs, `${job.id}.json`), { force: true });
+					throw error;
+				} finally {
+					this.pendingJobs--;
+				}
+			}
 			case "start_control_estimation": {
 				const request = operationSchemas.start_control_estimation.parse(input);
 				const resolved = await resolveControls(request, (id) => this.sample(id, signal));
@@ -653,6 +700,7 @@ class FcsAnalysis implements AnalysisService {
 					plannedCompensation: _planned,
 					plannedUnmixing: _unmixing,
 					estimation: _estimation,
+					gateCounts: _gateCounts,
 					...status
 				} = record;
 				return {
@@ -1210,7 +1258,7 @@ class FcsAnalysis implements AnalysisService {
 			totalEvents: job.totalEvents,
 			createdAt: job.createdAt,
 			completedAt: job.completedAt,
-			request: job.estimation?.request ?? job.request,
+			request: job.gateCounts?.request ?? job.estimation?.request ?? job.request,
 			inputContext: job.inputContext,
 			error: job.error,
 			warnings: job.warnings,
@@ -1231,7 +1279,12 @@ class FcsAnalysis implements AnalysisService {
 			const value = receipt as Record<string, unknown>;
 			return {
 				jobId: id,
-				kind: value.operation === "control-estimation" ? "control-estimation" : "fcs-export",
+				kind:
+					value.operation === "gate-counts"
+						? "gate-counts"
+						: value.operation === "control-estimation"
+							? "control-estimation"
+							: "fcs-export",
 				progressUnit: value.operation === "control-estimation" ? "event-visits" : "events",
 				state: "succeeded",
 				phase: "complete",
@@ -1274,6 +1327,138 @@ class FcsAnalysis implements AnalysisService {
 				this.pump();
 			});
 	}
+	private async executeGateCountJob(job: Job): Promise<void> {
+		const resolved = job.gateCounts as ResolvedGateCounts;
+		const signal = job.abort.signal;
+		const staging = join(this.store.temporary, job.id),
+			destination = join(this.store.outputs, job.id);
+		const started = performance.now(),
+			queueMs = started - job.enqueuedAt;
+		let outcome: "succeeded" | "failed" | "cancelled" = "failed";
+		try {
+			signal.throwIfAborted();
+			job.state = "running";
+			job.phase = "counting-populations";
+			await this.store.saveRun(job.id, { ...this.jobRecord(job), gateCounts: resolved });
+			const summary = await this.withGpu(
+				(gpu) =>
+					runGateCounts(
+						gpu.kernels,
+						this.store,
+						resolved,
+						gpu.maxBinding,
+						this.chunkBytes,
+						signal,
+						(count) => {
+							job.processedEvents += count;
+						},
+					),
+				signal,
+			);
+			signal.throwIfAborted();
+			const artifact = {
+				schemaVersion: 1,
+				jobId: job.id,
+				sampleId: resolved.request.sampleId,
+				recipeHash: resolved.recipeHash,
+				summary,
+			};
+			const encoded = Buffer.from(`${boundedJson(artifact, 256 * 1024)}\n`);
+			job.result = {
+				path: this.store.relative(join(destination, "counts.json")),
+				sha256: createHash("sha256").update(encoded).digest("hex"),
+				bytes: encoded.byteLength,
+				receiptPath: this.store.relative(join(destination, "receipt.json")),
+			};
+			const receipt = {
+				schemaVersion: 1,
+				operation: "gate-counts",
+				jobId: job.id,
+				state: "succeeded",
+				hostInstanceId: this.instanceId,
+				buildId,
+				input: { sha256: resolved.request.sampleId },
+				inputContext: job.inputContext,
+				recipe: resolved.request,
+				recipeHash: resolved.recipeHash,
+				summary,
+				output: job.result,
+				eventCount: job.processedEvents,
+				progressUnit: "events",
+				gpu: { shaderHash: digest(KERNEL_SOURCES), adapter: (await this.gpuPromise)?.description },
+				nodeVersion: process.version,
+				platform: process.platform,
+				maxChunkBytes: this.chunkBytes,
+				timing: { queueMs, computationBeforePublicationMs: performance.now() - started },
+			};
+			const receiptBytes = Buffer.from(`${boundedJson(receipt, 256 * 1024)}\n`);
+			await mkdir(staging, { mode: 0o700 });
+			for (const [name, bytes] of [
+				["counts.json", encoded],
+				["receipt.json", receiptBytes],
+			] as const) {
+				const handle = await open(join(staging, name), "wx", 0o600);
+				try {
+					await writeAll(handle, bytes);
+					await handle.sync();
+				} finally {
+					await handle.close();
+				}
+			}
+			signal.throwIfAborted();
+			job.phase = "committing";
+			await rename(staging, destination);
+			outcome = "succeeded";
+			job.receipt = receipt;
+		} catch (error) {
+			outcome = signal.aborted ? "cancelled" : "failed";
+			job.phase = "cleaning-up";
+			job.error = failure(error);
+			delete job.result;
+			job.receipt = {
+				schemaVersion: 1,
+				operation: "gate-counts",
+				jobId: job.id,
+				state: outcome,
+				hostInstanceId: this.instanceId,
+				buildId,
+				recipe: resolved.request,
+				recipeHash: resolved.recipeHash,
+				inputContext: job.inputContext,
+				error: job.error,
+				processedEvents: job.processedEvents,
+				progressUnit: "events",
+			};
+		} finally {
+			try {
+				await rm(staging, { recursive: true, force: true });
+			} catch (error) {
+				job.warnings ??= [];
+				job.warnings.push(failure(error));
+			}
+			job.completedAt = new Date().toISOString();
+			const phase = outcome === "succeeded" ? "complete" : outcome;
+			try {
+				await this.store.saveRun(job.id, {
+					...this.jobRecord(job),
+					state: outcome,
+					phase,
+					result: job.result,
+					receipt: job.receipt,
+				});
+			} catch (error) {
+				job.warnings ??= [];
+				job.warnings.push(failure(error));
+			}
+			job.state = outcome;
+			job.phase = phase;
+			for (const [id, old] of this.jobs) {
+				if (this.jobs.size <= 128) break;
+				if (["succeeded", "failed", "cancelled"].includes(old.state)) this.jobs.delete(id);
+			}
+		}
+	}
+
 	private async executeControlJob(job: Job): Promise<void> {
 		const resolved = job.estimation as ResolvedControls;
 		const signal = job.abort.signal;
@@ -1488,6 +1673,7 @@ class FcsAnalysis implements AnalysisService {
 	}
 
 	private async executeJob(job: Job): Promise<void> {
+		if (job.gateCounts) return this.executeGateCountJob(job);
 		if (job.estimation) return this.executeControlJob(job);
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id);
