@@ -54,6 +54,20 @@ families below or availability of a studio/MCP transport.
 
 ## Capability families and agent-oriented delivery
 
+### Acquisition / spectral wave
+
+`register_unmixing` adds named detector/fluorochrome OLS with optional L2 residual.
+Preview, matrix registration and export now support explicit acquisition-linear
+input space, with matrices bound to their preprocessing settings. Original columns
+are retained in that space and derived outputs append; subsets/renames retain their
+roles and metadata context in receipts. Default stored-space behavior is unchanged.
+
+Independent kernel and host reviews passed. Synthetic NumPy/FlowIO references run
+in GPU regression tests without a Python CI dependency. A 50M-event / 20-column
+input expanded from 4 GB to 4.6 GB after gain/time conversion plus 3-detector/2-fluor
+OLS and residual generation, at approximately 436 MB peak host RSS. See
+`docs/reference/spectral-acquisition-validation.md` for precise qualifications.
+
 ### Native FCS / compensation wave
 
 The second wave adds the runnable `@flow-atlas/host` studio with eleven shared

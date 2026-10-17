@@ -23,6 +23,15 @@ describe("operation contracts", () => {
 			compensationId: "matrix",
 		},
 		register_compensation: { sampleId: "sample", spillover: { channels: ["A"], matrix: [1] } },
+		register_unmixing: {
+			sampleId: "sample",
+			detectors: ["A", "B"],
+			fluorochromes: ["F"],
+			matrix: [1, 0.5],
+			residualChannel: "fit",
+			inputSpace: "linearized",
+			acquisition: { timeStep: 1 },
+		},
 		start_fcs_export: {
 			sampleId: "sample",
 			compensationId: "matrix",

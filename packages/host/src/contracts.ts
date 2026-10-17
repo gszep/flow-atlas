@@ -19,6 +19,31 @@ export class AnalysisError extends Error {
 const index = z.number().int().nonnegative();
 const limit = z.number().int().min(1).max(100);
 const id = z.string().min(1);
+const processing = {
+	inputSpace: z
+		.enum(["stored", "linearized"])
+		.describe(
+			"Stored means decoded file values; linearized explicitly applies acquisition log/gain/time scaling. Omitted requests inherit a registered matrix's context, otherwise stored.",
+		)
+		.optional(),
+	acquisition: z
+		.strictObject({
+			timeChannel: z
+				.string()
+				.min(1)
+				.describe(
+					"Exact temporal parameter; defaults to unique case-insensitive exact Time. Its gain is ignored.",
+				)
+				.optional(),
+			timeStep: z
+				.number()
+				.finite()
+				.positive()
+				.describe("Seconds per stored time tick; overrides $TIMESTEP, default one when absent.")
+				.optional(),
+		})
+		.optional(),
+};
 export const operationSchemas = {
 	list_capabilities: z.strictObject({}),
 	import_fcs: z.strictObject({ path: z.string().min(1) }),
@@ -33,13 +58,16 @@ export const operationSchemas = {
 	}),
 	get_spillover: z.strictObject({ sampleId: id }),
 	preview_fcs: z.strictObject({
+		...processing,
 		sampleId: id,
 		offset: index.optional(),
 		limit: limit.optional(),
 		channels: z.array(z.string()).max(32).optional(),
 		compensationId: id.optional(),
+		unmixingId: id.optional(),
 	}),
 	register_compensation: z.strictObject({
+		...processing,
 		sampleId: id,
 		spillover: z
 			.strictObject({
@@ -48,9 +76,35 @@ export const operationSchemas = {
 			})
 			.optional(),
 	}),
+	register_unmixing: z.strictObject({
+		...processing,
+		sampleId: id,
+		detectors: z.array(z.string().min(1)).min(1).max(128),
+		fluorochromes: z.array(z.string().min(1)).min(1).max(128),
+		matrix: z.array(z.number().finite()).min(1).max(16384),
+		residualChannel: z.string().min(1).optional(),
+		outputRanges: z
+			.array(z.number().finite().positive())
+			.min(1)
+			.max(128)
+			.describe(
+				"Nominal FCS ranges, one per fluorochrome; default 262144. These do not clip values.",
+			)
+			.optional(),
+		residualRange: z
+			.number()
+			.finite()
+			.positive()
+			.describe(
+				"Nominal FCS range for the optional L2 residual, not a rejection threshold; default 262144.",
+			)
+			.optional(),
+	}),
 	start_fcs_export: z.strictObject({
+		...processing,
 		sampleId: id,
 		compensationId: id.optional(),
+		unmixingId: id.optional(),
 		channels: z.array(z.string()).min(1).max(1024).optional(),
 		renameChannels: z.record(z.string(), z.string()).optional(),
 		keywords: z.record(z.string(), z.string()).optional(),

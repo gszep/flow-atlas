@@ -2,7 +2,8 @@
 
 The Node 24 studio exposes one shared analysis backend through MCP and JSON-RPC.
 It imports FCS artifacts, inspects bounded metadata/event pages, validates and
-applies conventional compensation on WebGPU, and writes new FCS files in chunks.
+applies explicit acquisition scaling, conventional compensation or spectral OLS
+on WebGPU, and writes new FCS files in chunks.
 An agent can run the complete workflow without launching FlowJo or a browser.
 
 ## Start a studio
@@ -100,6 +101,68 @@ try {
 Choose a deadline appropriate to the experiment. In RPC the operation is the
 JSON-RPC `method`; MCP exposes identical names and strict input schemas.
 
+## Explicit acquisition and spectral processing
+
+`preview_fcs`, `register_compensation`, `register_unmixing` and `start_fcs_export`
+accept `inputSpace: "stored" | "linearized"`. Stored remains the default for
+unbound requests and means values in the input file—not proof that the instrument
+or another application never processed them. Linearized is an opt-in acquisition
+profile; it is not a display transform.
+
+- Ordinary linear channels divide by gain. Log channels apply
+  `log0 * 10^(decades * stored / range) / gain`. Positive decades with zero log0
+  use one, recorded as a compatibility normalization.
+- Time is an explicit exact `acquisition.timeChannel`, otherwise the unique
+  case-insensitive exact name `Time`. Its gain is ignored. `acquisition.timeStep`
+  overrides declared metadata; absent metadata defaults to one. Non-unit step
+  without Time, ambiguous Time and nonlinear Time reject.
+- `$TIMESTEP` and legacy `TIMESTEP` are reconciled explicitly; conflicting values
+  require an override. Linearized export removes stale aliases, writes canonical
+  `$TIMESTEP=1`, and resets exported gains/amplification. Values are not clamped
+  to nominal ranges. Stored-space Time renaming with a non-unit timestep requires
+  explicit linearization first.
+- Matrices bind their input space and effective acquisition settings. When a matrix
+  ID is supplied, omitted processing settings inherit its definition; contradictory
+  settings reject. Existing stored-space conventional IDs remain compatible.
+
+`register_unmixing` accepts named `detectors`, named `fluorochromes`, a row-major
+fluorochrome-by-detector `matrix`, optional `residualChannel`, and nominal
+`outputRanges`/`residualRange` (default 262144, not clipping thresholds).
+For `measured = abundances × reference`, the GPU computes unweighted full-rank OLS
+with column-pivoted Householder QR. There must be at least as many detectors as
+fluorochromes, with at most 128 of each. Negative abundances are retained.
+
+All original columns remain in the selected input space; fluorochromes and optional
+Euclidean L2 fit residual are appended. Select/reorder/rename these columns on export
+as usual. Derived outputs cannot impersonate the Time axis. Receipts record column
+roles, matrix/input context, GPU quality metrics and acquisition evidence. Nominal
+output ranges are supplied metadata, not measured extrema. Conventional compensation
+and spectral OLS are alternatives in one request, not an implicit chain.
+
+Example arguments to `register_unmixing`, after importing a compatible sample:
+
+```json
+{
+  "sampleId": "<imported sample ID>",
+  "inputSpace": "linearized",
+  "detectors": ["V450", "V500", "B530"],
+  "fluorochromes": ["CD3", "CD19"],
+  "matrix": [1, 0.25, 0.5, 0.125, 1, 0.75],
+  "residualChannel": "UnmixingResidual"
+}
+```
+
+Pass its returned ID as `unmixingId` to preview/export. These coefficients are
+illustrative, not a reference for an actual panel.
+
+Both profiles are F32 with explicit numerical rejection policies. Identity
+acquisition channels preserve bits; transformed values reject nonfinite or unsafe
+subnormal intermediates/results. Spectral diagnostics distinguish accepted QR pivots
+from an SVD rank estimate and infinity conditioning from 2-norm conditioning.
+Nonlinear Time, weighted WLS/WOLS, SpectralFX and native FlowJo parity remain outside
+this implementation. Failures identify processing stage and source chunk coordinates;
+no partially processed FCS is published.
+
 ## Numerical and artifact contracts
 
 - FCS list-mode 2.0/3.0/3.1 input, strict UTF-8 TEXT, and F/I/D decoding to F32.
@@ -107,24 +170,28 @@ JSON-RPC `method`; MCP exposes identical names and strict input schemas.
   and time scaling are not silently applied. F64/I64 conversion is not lossless.
 - Conventional square spillover uses `measured = true × spill`. Both inversion
   and event arithmetic run on WebGPU. Singular/nonfinite/unsafe matrices reject
-  with diagnostics. This does not claim native FlowJo parity, spectral OLS/WLS,
+  with diagnostics. This does not claim native FlowJo parity, weighted unmixing,
   correction-matrix equivalence, or automatic acquisition/precompensation inference.
-- Compensation participants and exported channels must be linear and unit-gain.
-  Unsupported scaling is an explicit capability error. Negative and above-range
-  compensated values remain valid; they are not clamped.
-- Export is explicitly FCS3.1 F32 little-endian. Compensated exports strip active
+- Stored-space compensation participants and exports require linear unit-gain
+  values. Explicit linearization enables supported gain/log/time conversions.
+  Negative and above-range values remain valid and are not clamped.
+- Export is explicitly FCS3.1 F32 little-endian. Compensated/unmixed exports strip active
   spillover aliases and retain the matrix in their receipt. Raw exports preserve
   a complete explicit matrix, including renamed parameter identities.
 - Inputs are content-addressed snapshots under `.flow-atlas/inputs`. Replaced
   source files cannot silently change already imported samples. Export rechecks
   the snapshot hash. Input artifacts, outputs and receipts are retained on disk;
   no automatic disk eviction/quota is implemented in this wave.
-- Default decoded chunks are 4 MiB; configurable range is 1 KiB–64 MiB. Encoded
+- The default 4 MiB event budget bounds both decoded input and expanded output
+  rows; configurable range is 1 KiB–64 MiB. Encoded
   plus decoded source chunks also respect 128 MiB. No whole-file event array or
   serialized event payload enters the workspace document.
+- Current multi-stage processing exchanges bounded F32 chunks between stages;
+  it is not yet a fused GPU-resident pipeline. Measurements include those upload
+  and readback costs. Bounded memory is not a claim of optimal throughput.
 - There is one export job at a time, at most 16 queued jobs/active API calls,
   32 cached full sample metadata records, a 4096-entry session sample catalog,
-  128 registered compensation definitions, and 128 retained terminal job objects.
+  128 registered conventional and 128 spectral definitions, and 128 retained terminal job objects.
   Older terminal observations remain on disk. JSON transport limits below still apply.
 - Job progress is ephemeral; terminal receipts and observations survive ordinary
   process restart. Published receipts are authoritative if the secondary run index
@@ -149,7 +216,7 @@ await studio.close();
 ```
 
 `AnalysisService.invoke(name, args, signal?)` receives validated arguments for the
-eleven operations in exported `operationSchemas`. `AnalysisError(code, message,
+twelve operations in exported `operationSchemas`. `AnalysisError(code, message,
 details?)` supplies public, JSON-safe errors; never put secrets in these fields.
 Unexpected exceptions become `INTERNAL_ERROR` without exposing their messages.
 The backend owns file roots, data, GPU resources, export jobs and receipts. It

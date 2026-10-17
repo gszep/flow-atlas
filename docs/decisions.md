@@ -529,3 +529,218 @@ hashes match the earlier run on the same Metal backend. This is one measured
 Node/Dawn baseline, not a Rust comparison or proof of bounded memory for the
 older full-sample gating/rendering paths. Source/build identity and complete
 measurement qualifications are in `reference/native-fcs-benchmark.md`.
+
+## 2026-10-17 — Explicit GPU acquisition linearization profile
+
+**Verified source:** FlowIO `flowdata.py` at pinned commit
+`83d28a22d42235c10d17afb017250ee208afed95`, locally read lines 250–290 and
+635–733. Its preprocessing uses `log0 * 10^(decades * stored / range) / gain`
+for positive decades, normalizes zero log0 to one, divides linear channels by
+gain, and ignores selected Time gain while multiplying Time by timestep. This
+verifies shared mathematics, not native FlowJo parity or Float64 equivalence:
+FlowIO materializes NumPy Float64; this implementation uses GPU F32 only.
+
+**Decision:** `prepareAcquisition(k, channels, options, maxBinding)` snapshots a
+device-bound immutable plan; `linearizeChunk(k, plan, data, maxBinding)` returns
+fresh row-major F32 output. It is opt-in stored→acquisition-linear conversion,
+not a display transform, compensation, or automatic import/export step. CPU work
+only validates/packs metadata and copies buffers. The standalone acquisition WGSL
+does all event arithmetic. Callers own FCS output metadata sanitation.
+
+The profile `stored-to-acquisition-linear-f32-v1` records effective F32 per-channel
+operations, normalized log0, ignored Time gain, selected Time name and resolution,
+timestep, precision and numerical policy in JSON. Names must be nonempty and
+exact-unique. Explicit `timeChannel` must resolve exactly; otherwise only a unique
+case-insensitive exact `Time` qualifies (not `Time-A` or prefixes). Ambiguity,
+logarithmic Time, linear amplification `(0, nonzero)`, and an explicitly supplied
+non-unit timestep without Time reject. Timestep defaults to one; gain, range and
+timestep must be positive finite normal F32; decades/log0 allow zero. Gain zero
+rejects, deliberately unlike FlowIO's zero-gain quirk. Time gain is validated but
+ignored. These strict policies are not claims about all historical FCS producers.
+
+Identity operations use u32 copies preserving NaN payloads, infinities, subnormal
+bits and negative zero. Transformed channels reject nonfinite/subnormal input,
+nonfinite arithmetic and nonzero subnormal intermediates/results, with guards
+before arithmetic to avoid GPU flush-to-zero/saturation hiding failures. Log
+evaluation computes decades×value, divides range, multiplies log2(10), applies
+exp2, multiplies log0, then divides gain. Its conservative exp2 exponent interval
+[-126, 127.99998] is recorded in metadata. Intermediate rejection may reject a
+mathematically representable final result; this is an explicit portable F32 safety
+policy, not a high-precision solver. Linear negatives and above-range values are
+retained; no clipping or Time correction heuristic is applied. Numerical errors
+carry JSON `source: gpu-computation`, failing-channel-value count and event bounds
+of the first rejected window, not whole-input totals. No partial result is returned.
+
+**Limits/ownership:** 1–4096 channels; 32 metadata bytes/channel, bounded separately
+at preparation by the actual caller/device binding limit. Chunk maxBinding is an
+event-window budget, not a second cap on persistent metadata. Whole-row windows
+obey 128 MiB, device storage/buffer and dispatch limits. Zero-offset window buffers
+stream input chunks larger than a single GPU buffer, as compensation does. Input
+storage is borrowed and must remain unchanged until completion. Plans permit
+concurrent same-device calls; idempotent destroy rejects new calls and defers
+persistent buffer release until active calls finish. Temporary/readback resources
+are released on success and failure. Output is accumulated only within the caller's
+chunk; callers remain responsible for chunk-level host-memory bounds.
+
+**Measured targeted evidence:** Dawn/Metal tests compare an independent test-only
+closed-form scalar reference for gain/log/time, normalized log0, negatives and
+above-range values. Coverage includes identity bit preservation, nonzero input
+byte offsets, multiwindow rows, metadata rejection, Time selection/defaults,
+nonfinite/overflow/underflow diagnostics, empty/malformed input, immutable plans,
+the 4096-channel ceiling, concurrent/in-flight destroy and allocation cleanup.
+Remote llvmpipe, native FlowJo parity and large-file throughput are unverified.
+
+**Measured required validation:** Node 24.18.0/pnpm 11.16.0, isolated dependency
+installation 4.6 s. Lint and declaration/typecheck ran concurrently (two jobs,
+2 GiB heaps), then the full suite used one worker/one GPU suite at a time because
+workspace imports consume declaration outputs. Queue/execution seconds: lint
+0.003/2.339, typecheck 0.004/6.707, tests 6.712/44.873; total 51.585 s. All 253 tests
+in 19 files passed, including 11 acquisition tests. Vitest reported setup 0 s,
+transform 1.33 s, import 4.18 s and assertions 29.30 s. Logs/timings are retained
+in the session's approved temporary directory under `acquisition-validation/`.
+
+## 2026-10-17 — Named GPU spectral OLS with appended derived channels
+
+**Decision:** spectral unmixing is a separate explicit API, not a rectangular
+interpretation of conventional compensation. `SpectralMatrix` names detectors
+and fluorochromes independently and stores row-major F-by-D reference coefficients:
+`measured[D] = abundances[F] * reference[F,D]`. `prepareSpectralUnmixing` returns
+an immutable same-device `SpectralPlan`; `unmixChunk` returns every original input
+column followed by named fluorochrome columns and an optional named L2 residual.
+All names are nonempty/unique; detector names must match inputs exactly and derived
+names cannot collide. No first-M positional replacement, channel heuristic,
+nonnegativity clipping, WLS/WOLS, SpectralFX or FlowJo numerical parity is claimed.
+
+**Verified primary reference:** FlowUtils `compensate_spectral_ols` at pinned
+commit `b3aa2708eb25953e4e4dd9f9edcba3d503297e50`, source
+`https://raw.githubusercontent.com/whitews/FlowUtils/b3aa2708eb25953e4e4dd9f9edcba3d503297e50/src/flowutils/compensate.py`,
+uses `np.linalg.lstsq(spill_matrix.T, comp_data.T, rcond=-1)[0].T`.
+That verifies the unweighted objective/orientation only. Its positional overwrite
+of the first M channels and NumPy rank policy are deliberately not inherited.
+No Python runtime dependency or external numerical implementation was imported.
+
+**Math policy:** standalone WGSL performs all numerical preparation and event
+application. Setup normalizes by the GPU-computed largest absolute coefficient,
+then computes column-pivoted Householder QR of `A = reference.T / scale`, with
+recomputed trailing column norms and normalized Householder vectors. GPU triangular
+solves build the pseudoinverse in the declared fluorochrome order; no normal
+equations, CPU solve, or numerical fallback exists. Require `1 <= F <= D <= 128`.
+A pivot norm <=1e-6 times the initial largest column norm rejects; reported rank
+is accepted QR pivots, **not** an SVD numerical-rank estimate on failed inputs.
+Accept only `||A||inf * ||A+||inf <= 10000`, `||A+ A-I||inf <= 0.001`, and
+`||A A+ - (A A+)T||inf <= 0.001`. The latter tests orthogonality of the fitted
+projector, not zero event residual. These conservative f32 product safeguards
+are not error bounds, a 2-norm condition number, or biological suitability claims.
+Diagnostics explicitly say `source: gpu-computation` and name the algorithm,
+limits, dimensions, accepted rank, condition, setup residuals and matrix scale.
+Status 1 = rank rejection; 2 = unsafe setup arithmetic/range; 3 = condition/quality
+rejection; 4 = event error. Setup errors count once; event errors count failing
+rows in the first rejected window. Failed-setup quality metrics may be incomplete;
+unavailable/nonfinite metrics are represented by zero to keep diagnostics JSON-safe.
+
+**Precision/range policy:** coefficients must be finite normal f32 or zero (CPU
+metadata validation only). Nonzero pseudoinverse entries that become subnormal,
+zero or nonfinite on rescaling reject on the GPU. Participating nonfinite event
+values, nonfinite accumulated abundance/prediction/residual values and overflow
+reject the entire call without returning partial output. Residual L2 uses scaled
+sum-of-squares to avoid unnecessary squaring overflow. A large but finite event
+residual is QC, not an implicit rejection criterion. Derived arithmetic follows
+WebGPU f32 semantics, including possible subnormal flushing; neither negative nor
+above-range finite values are clamped. Original columns use u32 copies on GPU and
+CPU readback placement, preserving even nonparticipant NaN payloads, signed zero
+and subnormal bit patterns.
+
+**Ownership/limits:** setup's `maxBinding` is a persistent-matrix budget, distinct
+from `unmixChunk`'s event budget. Every buffer is capped by 128 MiB and actual
+device binding/buffer limits; both budgets must be integers >=32 bytes. Largest
+setup binding is D-by-D f32 (64 KiB at D=128). Event windows contain whole rows,
+bounded by both input and larger appended-output strides and dispatch limits.
+Each fresh GPU window binds at offset zero; there is no whole-chunk GPU allocation.
+The caller owns the CPU chunk input/output budget, and borrowed event data must
+remain unchanged until completion. Metadata is snapshotted before setup awaits.
+Plans retain only reference/pseudoinverse/mapping buffers; temporary resources are
+released on success and rejection. Destroy is idempotent, rejects new calls, and
+defers persistent cleanup until all already-started concurrent calls finish.
+
+**Measured locally:** Dawn/Metal tests cover asymmetric 3-by-2/4-by-2 forward
+models with independently constructed orthogonal noise, exact mixtures and pivot
+reordering, bit-preserved original columns, unequal strides/multiple windows,
+immutable snapshots, byte-offset subarrays, repeated/concurrent calls, empty data,
+names/shapes/rank/condition/range errors, large residual norms, cleanup after
+success/failure, in-flight destroy, and the full 128-by-128 ceiling with a 1 KiB
+event budget. This is synthetic mathematical validation, not NumPy execution,
+vendor parity, llvmpipe validation or large-file throughput evidence.
+
+**Required validation measured:** isolated dependency installation 5.250 s;
+Node 24.18.0 / pnpm 11.16.0. Lint (2.939 s) and declaration/typecheck build
+(6.296 s) ran in parallel, then the full suite passed 254 tests in 19 files
+(42.688 s command wall time; Vitest setup 0 s, transform 1.23 s, import 3.25 s,
+assertions 29.40 s). Total checks 48.988 s, per-job scheduling queue <0.001 s.
+At most two check jobs, 1536 MiB Node heaps, one Vitest worker/one GPU suite at
+a time; declarations precede workspace-importing tests. Logs are retained in the
+session's approved temporary directory under `spectral-validation`. These timings
+are local validation costs, not spectral-throughput measurements or remote CI.
+
+The final rerun also exercises a lowered dispatch ceiling and deletion of the
+optional residual name during asynchronous setup: **255 tests / 19 files pass**,
+including 13 spectral tests. Lint 1.005 s, incremental declaration/typecheck
+1.002 s, full test command 24.661 s; total 25.667 s, queue <0.001 s. Vitest reports
+0 s setup, 0.686 s transform, 1.74 s import and 17.44 s assertions. It reuses the
+same built workspace declarations and the same bounded scheduler policy.
+## 2026-10-17 — Explicit input spaces and named OLS in the agent API
+
+**Decision:** `register_unmixing` adds named detector/fluorochrome OLS, and preview,
+matrix registration and export accept opt-in `inputSpace: linearized`. Stored
+remains the default for unbound calls. Registered matrices bind their input space
+and effective acquisition settings; using a conflicting request context rejects.
+Stored-space conventional definition IDs retain their previous hash structure.
+Conventional compensation and spectral OLS cannot silently stack in one request.
+
+The processing order is stored F32 decode → optional acquisition scaling → one
+registered matrix operation → explicit channel selection/rename → FCS serialization.
+Original spectral input columns remain in that selected input space; named
+fluorochromes and optional Euclidean L2 residual are appended. Row windows use the
+larger input/output stride. The current host exchanges bounded arrays between
+stages; GPU-resident fusion is a follow-up, not an asserted property.
+
+Linearized exports reset gains/amplification and canonical timestep metadata to
+avoid reapplying conversion downstream. Legacy TIMESTEP aliases are reconciled;
+conflicts require an explicit override, and output aliases cannot override managed
+linearized time metadata. Time edits require positive decimal values. Derived
+outputs cannot impersonate Time, and changing an unlinearized Time identity with
+non-unit timestep rejects. Nominal output ranges are metadata, not clipping limits
+or measured extrema. Receipt channel roles track selected/renamed output columns.
+
+Receipts include bound context, actual acquisition profile/effective metadata hash,
+matrix setup diagnostics, and source chunk coordinates on numerical rejection.
+Failures clean staged outputs. No event arrays enter the workspace document and
+no human provenance stamp is synthesized.
+
+**Measured independent references:** a single-thread isolated Python environment
+used NumPy 2.5.4, FlowIO 1.4.0 and FlowUtils 1.2.2. Eleven spectral records compare
+F32-quantized inputs with float64 SVD/LAPACK least squares; seven acquisition records
+capture actual synthetic FlowIO reads. Private/source pins were verified byte-identical.
+Portable numeric records and an optional independent checker are committed under
+`packages/compute/test/data`; standard CI does not require Python. The checker
+reproduced all records and original synthetic FCS hashes. No vendor parity follows.
+
+Separate reviews found no demonstrated kernel regressions. Accepted spectral
+oracle cases had maximum observed abundance/residual errors about 1.40e-6/1.07e-6;
+diagnostic matrices rejected. Accepted acquisition cases had maximum normalized
+error 1.23e-7 against FlowIO, and nonlinear Time rejected. These are fixture-specific
+Metal measurements, not universal f32 error bounds or spectral/WOLS equivalence.
+## 2026-10-17 — Acquisition/OLS integration validation and expansion benchmark
+
+**Measured:** composed-host review approved `acd7400`, including independent
+257-event/1 KiB checks for reordered detectors, no-residual/full/derived-only/
+original-only/mixed export, defensive ownership and cancellation. Local validation
+passed 293 tests, lint/typecheck, host/UI builds and the compiled Node workflow.
+Linux/llvmpipe run `38996665556` passed 250 tests with ten private-oracle skips.
+
+The combined gain/time → 3-detector/2-fluor OLS → export workload processed 50M
+events, expanding 20 input columns (4 GB) to 23 output columns (4.6 GB). Peak host
+RSS was 436,346,880 bytes; import took 30.862 s and export 83.443 s. Source/build,
+watchdog, sampled-error and measurement limitations are recorded in
+`reference/spectral-acquisition-validation.md`. This confirms bounded host-memory
+behavior for that workload, not exhaustive numerical/vendor parity or a relative
+Rust advantage. Current stage readback/upload is included in the measurement.

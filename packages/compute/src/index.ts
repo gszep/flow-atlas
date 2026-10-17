@@ -1,3 +1,4 @@
+export * from "./acquisition.js";
 export * from "./boolean.js";
 export * from "./buffers.js";
 export * from "./compensation.js";
@@ -7,4 +8,5 @@ export * from "./gating.js";
 export * from "./kernels.js";
 export * from "./reference.js";
 export * from "./som.js";
+export * from "./spectral.js";
 export * from "./transform.js";

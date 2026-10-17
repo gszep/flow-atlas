@@ -1,5 +1,22 @@
 # Handoff
 
+## Explicit acquisition and spectral OLS (2026-10-17)
+
+The agent API now exposes `register_unmixing` and explicit stored/linearized input
+spaces. GPU acquisition conversion and pivoted-QR spectral OLS compose with preview,
+selection, FCS export and receipts. Matrices bind their preprocessing context;
+exports record original/derived roles and normalize Time/gain metadata correctly.
+Stored-space defaults remain unchanged. See `packages/host/README.md`.
+
+Independent NumPy/FlowIO records and a portable optional checker are committed in
+`packages/compute/test/data`. Separate kernel and composed-host reviews passed.
+Local checks passed 293 tests; Linux CI passed 250 with ten private-oracle skips.
+The combined 4 GB → 4.6 GB workload used about 436 MB host RSS. Numerical/performance
+scope and source identities: `docs/reference/spectral-acquisition-validation.md`.
+
+Weighted WLS/WOLS, SpectralFX, automatic control-derived reference estimation,
+streaming gate/reduction jobs and GPU-resident stage fusion remain follow-ups.
+
 ## Native FCS and agent studio (2026-10-17)
 
 The agent-first FCS workflow now lives in `packages/host`: MCP and JSON-RPC share
