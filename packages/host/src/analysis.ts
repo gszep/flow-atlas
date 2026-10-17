@@ -8,6 +8,7 @@ import {
 	type CompensationDiagnostics,
 	CompensationNumericalError,
 	type CompensationPlan,
+	ControlEstimationError,
 	compensateChunk,
 	KERNEL_SOURCES,
 	Kernels,
@@ -24,9 +25,17 @@ import { ArtifactStore, canonical, digest, fileSource, writeAll } from "./artifa
 import {
 	AnalysisError,
 	type AnalysisService,
+	boundedJson,
 	operationSchemas,
 	validateOperation,
 } from "./contracts.js";
+import {
+	type ControlResult,
+	type PopulationResult,
+	type ResolvedControls,
+	resolveControls,
+	runControlEstimation,
+} from "./control-estimation.js";
 import {
 	type InputContext,
 	inputContext,
@@ -56,6 +65,7 @@ interface Compensation {
 	matrix: number[];
 	diagnostics: CompensationDiagnostics;
 	context: InputContext;
+	estimation?: { jobId: string; recipeHash: string; profile: string; receiptPath: string };
 }
 interface ExportRequest extends ProcessingRequest {
 	sampleId: string;
@@ -69,6 +79,7 @@ interface ExportRequest extends ProcessingRequest {
 	outputName?: string | undefined;
 }
 interface Job {
+	kind?: "fcs-export" | "control-estimation";
 	id: string;
 	state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
 	phase: string;
@@ -81,9 +92,19 @@ interface Job {
 	plannedCompensation?: Compensation;
 	plannedUnmixing?: SpectralDefinition;
 	inputContext: InputContext;
+	estimation?: ResolvedControls;
+	controlEvidence?: PopulationResult[];
+	controlCandidate?: Pick<ControlResult, "channels" | "matrix" | "estimationDiagnostics">;
+	progressDetail?: { populationId: string; pass: number };
 	abort: AbortController;
 	error?: { code: string; message: string; details?: unknown };
-	result?: { path: string; sha256: string; bytes: number; receiptPath: string };
+	result?: {
+		path: string;
+		sha256: string;
+		bytes: number;
+		receiptPath: string;
+		compensationId?: string;
+	};
 	receipt?: Record<string, unknown>;
 	warnings?: Array<{ code: string; message: string; details?: unknown }>;
 }
@@ -119,10 +140,11 @@ function failure(error: unknown): { code: string; message: string; details?: unk
 	if (
 		error instanceof CompensationNumericalError ||
 		error instanceof AcquisitionNumericalError ||
-		error instanceof SpectralNumericalError
+		error instanceof SpectralNumericalError ||
+		error instanceof ControlEstimationError
 	)
 		return {
-			code: "NUMERICAL_REJECTION",
+			code: error instanceof ControlEstimationError ? error.code : "NUMERICAL_REJECTION",
 			message: error.message,
 			details: JSON.parse(
 				JSON.stringify(error.diagnostics, (_key, value: unknown) =>
@@ -173,6 +195,7 @@ class FcsAnalysis implements AnalysisService {
 	private readonly instanceId = randomUUID();
 	private running: Promise<void> | null = null;
 	private pendingJobs = 0;
+	private reservedCompensations = 0;
 	private gpuPromise: Promise<GpuContext> | null = null;
 	private gpuOwner: unknown = null;
 	private gpuTail: Promise<void> = Promise.resolve();
@@ -209,13 +232,20 @@ class FcsAnalysis implements AnalysisService {
 			case "list_capabilities":
 				operationSchemas.list_capabilities.parse(input);
 				return {
-					version: "flow-atlas-fcs-v2",
+					version: "flow-atlas-fcs-v3",
 					buildId,
 					inputFormats: ["FCS2.0", "FCS3.0", "FCS3.1"],
 					outputFormat: "FCS3.1-F32-LE",
 					decodedPrecision: "float32",
 					compute: "WebGPU; no CPU fallback",
 					compensation: "square conventional spillover; measured = true × spill",
+					controlEstimation: {
+						profile: "conventional-median-difference-primary-f32-v1",
+						selection: "AND of inclusive exact-F32 ranges",
+						passesPerPopulation: 4,
+						minEvents: "required caller policy",
+						scope: "explicit populations, not AutoSpill or biological QC",
+					},
 					acquisition: {
 						inputSpaces: ["stored", "linearized"],
 						explicitOnly: true,
@@ -231,6 +261,7 @@ class FcsAnalysis implements AnalysisService {
 						outputs: "appended fluorochromes and optional L2 residual",
 					},
 					limits: {
+						maxControlDetectors: 32,
 						chunkBytes: this.chunkBytes,
 						maxCompensatedChannels: 128,
 						maxSpectralDetectors: 128,
@@ -250,7 +281,7 @@ class FcsAnalysis implements AnalysisService {
 						"nonlinear Time acquisition",
 						"lossless float64/integer export",
 						"multiple datasets",
-						"automatic compensation inference",
+						"AutoSpill and automatic control gate inference",
 					],
 					recovery:
 						"Receipts survive restart; jobs do not automatically resume. Re-import the same source to recover its content-hash sample ID.",
@@ -372,7 +403,7 @@ class FcsAnalysis implements AnalysisService {
 				});
 				const existing = this.compensations.get(id);
 				if (existing) return this.compensationSummary(existing);
-				if (this.compensations.size >= 128)
+				if (this.compensations.size + this.reservedCompensations >= 128)
 					throw new AnalysisError("MATRIX_LIMIT", "Session compensation limit reached");
 				await this.validateAcquisition(sample, context, signal);
 				const diagnostics = await this.withGpu(async (gpu) => {
@@ -390,7 +421,10 @@ class FcsAnalysis implements AnalysisService {
 				}, signal);
 				signal.throwIfAborted();
 				const record = { id, sampleId: sample.id, channels, matrix, diagnostics, context };
-				if (!this.compensations.has(id) && this.compensations.size >= 128)
+				if (
+					!this.compensations.has(id) &&
+					this.compensations.size + this.reservedCompensations >= 128
+				)
 					throw new AnalysisError("MATRIX_LIMIT", "Session compensation limit reached");
 				this.compensations.set(id, record);
 				return this.compensationSummary(record);
@@ -529,6 +563,42 @@ class FcsAnalysis implements AnalysisService {
 					await handle.close();
 				}
 			}
+			case "start_control_estimation": {
+				const request = operationSchemas.start_control_estimation.parse(input);
+				const resolved = await resolveControls(request, (id) => this.sample(id, signal));
+				signal.throwIfAborted();
+				if (this.queue.length + this.pendingJobs >= 16)
+					throw new AnalysisError("QUEUE_FULL", "Analysis queue is full");
+				this.pendingJobs++;
+				const job: Job = {
+					kind: "control-estimation",
+					id: randomUUID(),
+					state: "queued",
+					phase: "queued",
+					processedEvents: 0,
+					totalEvents: resolved.totalEventVisits,
+					createdAt: new Date().toISOString(),
+					enqueuedAt: performance.now(),
+					request: { sampleId: request.sampleId, ...resolved.context },
+					inputContext: resolved.context,
+					estimation: resolved,
+					controlEvidence: [],
+					abort: new AbortController(),
+				};
+				try {
+					await this.store.saveRun(job.id, { ...this.jobRecord(job), estimation: resolved });
+					signal.throwIfAborted();
+					this.jobs.set(job.id, job);
+					this.queue.push(job);
+					queueMicrotask(() => this.pump());
+					return this.jobRecord(job);
+				} catch (error) {
+					await rm(join(this.store.runs, `${job.id}.json`), { force: true });
+					throw error;
+				} finally {
+					this.pendingJobs--;
+				}
+			}
 			case "start_fcs_export": {
 				const request = operationSchemas.start_fcs_export.parse(input);
 				const sample = await this.sample(request.sampleId, signal);
@@ -582,6 +652,7 @@ class FcsAnalysis implements AnalysisService {
 					receipt: _receipt,
 					plannedCompensation: _planned,
 					plannedUnmixing: _unmixing,
+					estimation: _estimation,
 					...status
 				} = record;
 				return {
@@ -712,6 +783,7 @@ class FcsAnalysis implements AnalysisService {
 			matrixHash: digest(comp.matrix),
 			diagnostics: structuredClone(comp.diagnostics),
 			context: structuredClone(comp.context),
+			estimation: comp.estimation ?? null,
 		};
 	}
 	private unmixing(sample: Sample, id?: string): SpectralDefinition | undefined {
@@ -1127,6 +1199,9 @@ class FcsAnalysis implements AnalysisService {
 	private jobRecord(job: Job) {
 		return {
 			jobId: job.id,
+			kind: job.kind ?? "fcs-export",
+			progressUnit: job.estimation ? "event-visits" : "events",
+			progressDetail: job.progressDetail,
 			hostInstanceId: this.instanceId,
 			live: true,
 			state: job.state,
@@ -1135,7 +1210,7 @@ class FcsAnalysis implements AnalysisService {
 			totalEvents: job.totalEvents,
 			createdAt: job.createdAt,
 			completedAt: job.completedAt,
-			request: job.request,
+			request: job.estimation?.request ?? job.request,
 			inputContext: job.inputContext,
 			error: job.error,
 			warnings: job.warnings,
@@ -1156,13 +1231,15 @@ class FcsAnalysis implements AnalysisService {
 			const value = receipt as Record<string, unknown>;
 			return {
 				jobId: id,
+				kind: value.operation === "control-estimation" ? "control-estimation" : "fcs-export",
+				progressUnit: value.operation === "control-estimation" ? "event-visits" : "events",
 				state: "succeeded",
 				phase: "complete",
 				result: value.output,
 				request: value.recipe,
 				inputContext: value.inputContext,
-				processedEvents: value.eventCount,
-				totalEvents: value.eventCount,
+				processedEvents: value.eventCount ?? value.eventVisits,
+				totalEvents: value.eventCount ?? value.eventVisits,
 				receipt,
 			};
 		}
@@ -1197,7 +1274,221 @@ class FcsAnalysis implements AnalysisService {
 				this.pump();
 			});
 	}
+	private async executeControlJob(job: Job): Promise<void> {
+		const resolved = job.estimation as ResolvedControls;
+		const signal = job.abort.signal;
+		const staging = join(this.store.temporary, job.id),
+			destination = join(this.store.outputs, job.id);
+		const started = performance.now(),
+			queueMs = started - job.enqueuedAt;
+		let outcome: "succeeded" | "failed" | "cancelled" = "failed";
+		let reserved = false;
+		try {
+			signal.throwIfAborted();
+			job.state = "running";
+			job.phase = "control-medians";
+			await this.store.saveRun(job.id, { ...this.jobRecord(job), estimation: resolved });
+			const target = await this.sample(resolved.request.sampleId, signal);
+			if (
+				canonical(inputContext(target.metadata, resolved.request)) !== canonical(resolved.context)
+			)
+				throw new AnalysisError(
+					"PROCESSING_CONTEXT_MISMATCH",
+					"Target context changed after control job admission",
+				);
+			await this.validateAcquisition(target, resolved.context, signal);
+			const result = await this.withGpu(
+				(gpu) =>
+					runControlEstimation(
+						gpu.kernels,
+						this.store,
+						resolved,
+						target,
+						gpu.maxBinding,
+						this.chunkBytes,
+						signal,
+						(count, detail) => {
+							job.processedEvents += count;
+							job.progressDetail = detail;
+						},
+						(summary) => {
+							job.controlEvidence?.push(summary);
+						},
+						(candidate) => {
+							job.controlCandidate = candidate;
+							job.phase = "validating-matrix";
+						},
+					),
+				signal,
+			);
+			signal.throwIfAborted();
+			const profile = result.estimationDiagnostics.profile;
+			const id = digest({
+				sampleId: target.id,
+				channels: result.channels,
+				matrix: result.matrix,
+				algorithm: "gpu-conventional-v1",
+				context: resolved.context,
+				estimation: { profile, recipeHash: resolved.recipeHash },
+			});
+			const existing = this.compensations.get(id);
+			if (!existing) {
+				if (this.compensations.size + this.reservedCompensations >= 128)
+					throw new AnalysisError("MATRIX_LIMIT", "No registry capacity for the estimated matrix");
+				this.reservedCompensations++;
+				reserved = true;
+			}
+			const receiptPath = this.store.relative(join(destination, "receipt.json"));
+			const definition: Compensation = existing ?? {
+				id,
+				sampleId: target.id,
+				channels: result.channels,
+				matrix: result.matrix,
+				diagnostics: result.applicationDiagnostics,
+				context: resolved.context,
+				estimation: { jobId: job.id, recipeHash: resolved.recipeHash, profile, receiptPath },
+			};
+			const matrixArtifact = {
+				schemaVersion: 1,
+				compensationId: id,
+				sampleId: target.id,
+				channels: result.channels,
+				matrix: result.matrix,
+				context: resolved.context,
+				estimation: { profile, recipeHash: resolved.recipeHash, jobId: job.id },
+				diagnostics: result.applicationDiagnostics,
+			};
+			const encoded = Buffer.from(`${boundedJson(matrixArtifact)}\n`);
+			job.result = {
+				path: this.store.relative(join(destination, "matrix.json")),
+				sha256: createHash("sha256").update(encoded).digest("hex"),
+				bytes: encoded.byteLength,
+				receiptPath,
+				compensationId: id,
+			};
+			const receipt = {
+				schemaVersion: 1,
+				operation: "control-estimation",
+				jobId: job.id,
+				state: "succeeded",
+				hostInstanceId: this.instanceId,
+				buildId,
+				input: { sha256: target.id, role: "application-target-metadata" },
+				inputContext: resolved.context,
+				recipe: resolved.request,
+				recipeHash: resolved.recipeHash,
+				channels: result.channels,
+				controls: resolved.controls,
+				populations: result.populations,
+				compatibility: resolved.compatibility,
+				estimatedMatrix: matrixArtifact,
+				estimationDiagnostics: result.estimationDiagnostics,
+				output: job.result,
+				progressUnit: "event-visits",
+				eventVisits: job.processedEvents,
+				distinctPopulationCount: result.populations.length,
+				qcScope:
+					"Reported metadata, support, primary separation and numerical conditioning; not biological validity or inferred-gate approval",
+				precision: "exact F32 median ranks; F32 paired-difference and normalization arithmetic",
+				gpu: { shaderHash: digest(KERNEL_SOURCES), adapter: (await this.gpuPromise)?.description },
+				nodeVersion: process.version,
+				platform: process.platform,
+				maxChunkBytes: this.chunkBytes,
+				timing: { queueMs, computationBeforePublicationMs: performance.now() - started },
+			};
+			const receiptBytes = Buffer.from(`${boundedJson(receipt, 256 * 1024)}\n`);
+			await mkdir(staging, { mode: 0o700 });
+			for (const [name, bytes] of [
+				["matrix.json", encoded],
+				["receipt.json", receiptBytes],
+			] as const) {
+				const handle = await open(join(staging, name), "wx", 0o600);
+				try {
+					await writeAll(handle, bytes);
+					await handle.sync();
+				} finally {
+					await handle.close();
+				}
+			}
+			signal.throwIfAborted();
+			job.phase = "committing";
+			await rename(staging, destination);
+			this.compensations.set(id, definition);
+			outcome = "succeeded";
+			job.receipt = receipt;
+		} catch (error) {
+			outcome = signal.aborted ? "cancelled" : "failed";
+			job.phase = "cleaning-up";
+			job.error = failure(error);
+			delete job.result;
+			job.receipt = {
+				schemaVersion: 1,
+				operation: "control-estimation",
+				jobId: job.id,
+				state: outcome,
+				hostInstanceId: this.instanceId,
+				buildId,
+				recipe: resolved.request,
+				recipeHash: resolved.recipeHash,
+				inputContext: resolved.context,
+				populations: job.controlEvidence,
+				candidate: job.controlCandidate,
+				compatibility: resolved.compatibility,
+				error: job.error,
+				progressUnit: "event-visits",
+				eventVisits: job.processedEvents,
+			};
+			try {
+				boundedJson(job.receipt, 256 * 1024);
+			} catch {
+				job.receipt = {
+					schemaVersion: 1,
+					operation: "control-estimation",
+					jobId: job.id,
+					state: outcome,
+					hostInstanceId: this.instanceId,
+					buildId,
+					recipe: resolved.request,
+					recipeHash: resolved.recipeHash,
+					error: job.error,
+					eventVisits: job.processedEvents,
+					evidenceOmitted: "Population endpoints and candidate exceed the MCP receipt budget",
+					completedPopulationCount: job.controlEvidence?.length ?? 0,
+				};
+			}
+		} finally {
+			if (reserved) this.reservedCompensations--;
+			try {
+				await rm(staging, { recursive: true, force: true });
+			} catch (error) {
+				job.warnings ??= [];
+				job.warnings.push(failure(error));
+			}
+			job.completedAt = new Date().toISOString();
+			const phase = outcome === "succeeded" ? "complete" : outcome;
+			try {
+				await this.store.saveRun(job.id, {
+					...this.jobRecord(job),
+					state: outcome,
+					phase,
+					result: job.result,
+					receipt: job.receipt,
+				});
+			} catch (error) {
+				job.warnings ??= [];
+				job.warnings.push(failure(error));
+			}
+			job.state = outcome;
+			job.phase = phase;
+			for (const [id, old] of this.jobs) {
+				if (this.jobs.size <= 128) break;
+				if (["succeeded", "failed", "cancelled"].includes(old.state)) this.jobs.delete(id);
+			}
+		}
+	}
+
 	private async executeJob(job: Job): Promise<void> {
+		if (job.estimation) return this.executeControlJob(job);
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id);
 		let pipeline: PreparedPipeline | undefined;
@@ -1316,6 +1607,7 @@ class FcsAnalysis implements AnalysisService {
 							matrix: comp.matrix,
 							diagnostics: pipeline.compensation?.diagnostics,
 							context: comp.context,
+							estimation: comp.estimation ?? null,
 							shaderHash: digest(KERNEL_SOURCES),
 							adapter: (await this.gpuPromise)?.description,
 						}

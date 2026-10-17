@@ -744,3 +744,158 @@ watchdog, sampled-error and measurement limitations are recorded in
 `reference/spectral-acquisition-validation.md`. This confirms bounded host-memory
 behavior for that workload, not exhaustive numerical/vendor parity or a relative
 Rust advantage. Current stage readback/upload is included in the measurement.
+
+## 2026-10-17 — Bounded replayable GPU exact-rank median summaries
+
+**Decision:** `summarizeMedians` returns immutable JSON-friendly lower/upper median
+rank endpoints, not an averaged median. Four replay passes (0..3) select two ranks
+per target with radix-256 histograms and GPU prefix/rank updates. GPU integer
+IEEE-754 monotone keys preserve every finite F32 value including subnormals;
+signed zeros are canonicalized to positive zero. No CPU event filtering, sorting,
+histogram selection or numerical fallback is used. CPU endpoint bit decoding is
+not arithmetic. This explicit `gpu-radix256-exact-rank-v1` profile does not assert
+native MedianExact double-arithmetic or complete vendor parity. The reported
+private wave-3 evidence for positive-minus-negative medians motivates composition,
+not a parity claim for this implementation.
+
+**Ownership/limits:** callers provide immutable, source-hashed replayable inputs;
+chunk boundaries may change. Total row/selected counts and impossible ranks catch
+some replay mutations, not equal-count content changes. Borrowed chunks are never
+mutated. Inputs have 1..4096 unique exact channel names, targets 1..128, ANDed
+inclusive ranges <=16 with unique exact names and exact finite F32 bounds (null
+means unbounded). Nonfinite filter values exclude rows; any selected nonfinite
+target rejects. Empty selections have a typed error. Source counts are capped at
+2^32-1 before GPU submission to prevent per-bin/count overflow.
+
+Event `maxBinding` is separate from fixed scratch state: complete-row windows
+respect that budget, 128 MiB, device buffer/binding and dispatch limits. Histograms
+use at most 256 KiB, rank state 2 KiB, metadata 704 bytes, uniforms 32 bytes and
+counts 12 bytes, independent of population size. Each window is drained before
+its input buffer is destroyed or the iterator advances. Abort/source/dispatch
+failures close active iteration and drain submitted work before owned cleanup.
+Cancellation cannot interrupt an indefinitely pending caller iterator `next()`;
+callers must also arrange cancellation of their source I/O.
+
+**Verified locally:** synthetic CPU-sort test oracles cover odd/even ranks, signs,
+ties, zeros, subnormals, finite extremes, inclusive multi-axis ranges, nonfinite
+policies, offset views, replay chunk changes, multiple windows, immutable metadata,
+limits, typed emptiness, source failures, cancellation and buffer cleanup. These
+are mathematical/kernel tests, not vendor or large-file performance evidence.
+
+**Measured validation:** own dependency installation 3.5 s; Node 24.18.0 / pnpm
+11.16.0. Lint 2.000 s and declaration/typecheck 7.031 s ran in parallel; the full
+suite then passed 306 tests in 23 files (including 13 median tests), command wall
+42.604 s. Total checks 49.641 s; queue overhead <=0.003 s/job. Vitest reports
+setup 0 s, transform 1.21 s, import 3.60 s and test execution 28.71 s. At most two
+check jobs with 1536 MiB Node heaps and one test/GPU worker; declarations were
+built once before workspace-importing tests. Local Dawn/Metal results only.
+
+## 2026-10-17 — Explicit conventional control median-difference GPU primitive
+
+**Decision:** `estimateControlMatrix(k, channels, controls, maxBinding, options?)`
+implements `conventional-median-difference-primary-f32-v1`, not AutoSpill,
+spectral estimation, inferred gates, spread QC or native FlowJo parity. The private
+wave-3 static report was **verified/read**: it supports positive-minus-negative
+MedianExact and a primary normalization branch, but does not establish complete
+public field mapping, even-count interpolation or numerical equivalence. This
+primitive therefore defines its own explicit mathematical midpoint convention.
+
+Require 1..128 unique nonempty exact detector names, exactly one control per
+detector (arbitrary input control order), and independent positive/negative median
+endpoint vectors in detector order. Counts are positive u32 integers, odd counts
+require repeated endpoints, and lower must be <= upper. CPU work only validates
+and snapshots metadata, packs normal-f32-or-zero endpoints, maps names and copies
+readback. One standalone WGSL dispatch computes paired endpoint differences:
+`delta_j = ((positive.lower_j-negative.lower_j) +
+(positive.upper_j-negative.upper_j))/2`, then `S_ij = delta_j/delta_i`.
+Subtracting endpoints first avoids prematurely rounding two large-baseline medians.
+Result is row-major, rows/columns both in requested detector order. Negative and
+above-unity coefficients are retained without max/max-absolute normalization or
+clipping. Defaults are `minEvents=1`, `minPrimarySeparation=0`; both populations
+must meet support, and primary separation must be strictly above the nonnegative
+f32 threshold. This is not a universal biological QC policy. Parent callers must
+run `prepareCompensation` for rank/conditioning before publishing a usable matrix.
+
+**Numerical policy:** finite normal f32 or zero inputs; reject unsafe intermediate
+differences/sums and coefficients above a conservative magnitude ceiling of 2^126,
+nonzero subnormal intermediates/results, and overflow risk. Tiny differences are
+checked after exact power-of-two scaling to prevent GPU flush-to-zero hiding them.
+This intentionally can reject a mathematically representable final answer; no CPU
+fallback or automatic rescaling substitutes a different profile. The GPU returns
+per-control status, primary separation, invalid-coefficient count and negative
+valid-coefficient count. Unavailable separation is `null` with explicit status;
+unattempted coefficient counts are `null`, not fabricated zero/valid metrics.
+`ControlEstimationError` (`CONTROL_ESTIMATION_REJECTED`) carries the same recursively
+frozen JSON diagnostics as success. No partial matrix is returned on rejection.
+
+**Ownership/limits:** inputs are copied before the first await; result owns its
+Float32Array, while result envelope, channel list and diagnostics are frozen.
+All temporary and staging buffers are destroyed on success or failure. Each buffer
+fits min(caller limit, device storage binding/buffer limits, 128 MiB). The bounded
+endpoint matrix is 16*N*N bytes (256 KiB maximum), quality is 24*N bytes and the
+remaining buffers are smaller. Metadata must fit one binding; this setup budget
+is not an event streaming budget. Dispatch count also obeys the device limit.
+
+**Measured locally:** 22 targeted Dawn/Metal tests pass, covering asymmetric
+2/3/17-detector independent mathematical references, shared negatives, reordered
+controls, odd/even independent counts, negative and above-unity coefficients,
+support/separation thresholds, large common baselines, tiny/huge f32 values,
+underflow/overflow rejection, immutable metadata, 128 detectors, lowered device
+limits and cleanup on success, numerical, pipeline, upload and readback failures.
+No native numerical fixtures or remote llvmpipe results are claimed.
+
+**Measured required validation:** Node 24.18.0 / pnpm 11.16.0, isolated dependency
+setup 4.372 s. Final lint and declaration/typecheck ran independently in parallel
+(1.569 / 2.820 s), then all 315 tests in 23 files passed with one Vitest worker
+(36.098 s command wall time). Tests wait for declarations because workspace imports
+consume their output. Final batch elapsed 38.921 s; runnable-job queue delays were
+0.002 / 0.002 / <0.001 s. Vitest reports setup 0 s, transform 1.15 s, import 3.36 s
+and assertions 24.14 s. At most two check jobs, 1536 MiB heaps, one native thread
+and one GPU suite at a time in that final batch. An earlier invocation mistakenly
+placed flags after an extra `--` and ran suites concurrently; it also caught a
+test fixture wrongly expecting rejection at the exactly permitted coefficient
+ceiling. The fixture and invocation were corrected, not the acceptance policy.
+Full final logs/timings are in the session's approved temporary directory under
+`control-estimator-validation-ses_eb8240337ffeYisU6UJT6khk5w`.
+
+## 2026-10-17 — Agent jobs for explicit control-derived compensation
+
+**Decision:** compose the reviewed GPU rank and median-difference primitives in
+`start_control_estimation`. Bind separate immutable positive/negative sources,
+exact selections, source-specific acquisition settings and application context.
+Require caller support policy, retain signed coefficients, and run existing GPU
+compensation conditioning before publication. This profile estimates conventional
+square matrices, not spectral references, automatic gates or AutoSpill.
+
+The host caps detectors at 32 and recipes at 64 KiB for bounded protocol evidence;
+shared population definitions reuse summaries. Four replay passes report event
+visits. Sources retain pinned descriptors with verified content hashes; only the
+current population reader is retained. Metadata compatibility compares reported
+instrument/serial/voltage fields, records missing values and does not claim
+biological validity. Linearized selections operate in explicit acquisition space
+without changing raw-space workspace gate definitions. Subnormal endpoints remain
+valid median ranks but receive an explicit estimator-policy rejection.
+
+Matrix JSON and receipts publish atomically; failed/cancelled runs keep diagnostics
+without registering a partial matrix. Session-local registrations include recipe
+lineage, and downstream export receipts link the estimation receipt. Persisted
+artifacts survive restart, but callers must explicitly register their matrix/context
+again. No human provenance stamps or event arrays enter workspace documents.
+
+**Verified:** primitive and host reviews passed. Host review fixes reject temporal
+detector roles and unrepresentable thresholds before work, and bound publication
+to MCP's 256 KiB evidence budget. Oversized failures explicitly omit endpoint/
+candidate details when necessary while retaining recipe/error/progress. Two real
+MCP boundary fixtures exercise both retained and compacted failure evidence.
+
+**Measured local validation:** 341 tests in 25 files passed, including 13 composed
+control-job tests. Lint/typecheck ran concurrently (1.261/1.261 s); full tests and
+the dependent UI build ran concurrently (42.470/3.485 s), followed by compiled
+Node/RPC smoke (1.943 s). Total batch 45.677 s; runnable queue delay <0.001 s each.
+Vitest reports transform 1.04 s, setup 0 s, import 3.32 s and assertions 30.64 s.
+At most two jobs with 1536 MiB heaps and one GPU test worker/native thread were
+used. The isolated dependency setup (3.3 s) and host build preceded this batch;
+the immutable host build was reused by smoke. Logs/timings are under the session's
+approved temporary directory at `control-final-validation`. Remote final-head CI
+remains required before merge; no large-file control-estimation benchmark or
+native numerical parity is claimed.

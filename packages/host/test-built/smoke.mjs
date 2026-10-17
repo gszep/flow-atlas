@@ -39,6 +39,26 @@ try {
 	} finally {
 		await file.close();
 	}
+	const controlsFile = await open(join(root, "controls.fcs"), "wx");
+	try {
+		const metadata = {
+			version: "FCS3.1",
+			keywords: {},
+			eventCount: 3,
+			channels: ["A", "B"].map((name, i) => ({
+				index: i + 1,
+				name,
+				bits: 32,
+				range: 262144,
+				amplification: [0, 0],
+				gain: 1,
+			})),
+		};
+		for await (const chunk of writeFcs(metadata, [new Float32Array([0, 0, 8, 2, -1, 8])]))
+			await controlsFile.writeFile(chunk);
+	} finally {
+		await controlsFile.close();
+	}
 	child = spawn(
 		process.execPath,
 		[fileURLToPath(new URL("../dist/main.js", import.meta.url)), "--root", root],
@@ -158,10 +178,40 @@ try {
 	const spectralReceipt = await call("get_receipt", { jobId: spectralJob.jobId });
 	assert.equal(spectralReceipt.inputContext.inputSpace, "linearized");
 	assert.equal(spectralReceipt.unmixing.diagnostics.rank, 1);
+	const controls = await call("import_fcs", { path: "controls.fcs" });
+	const population = (startEvent) => ({ sampleId: controls.sampleId, startEvent, eventCount: 1 });
+	const estimation = await call("start_control_estimation", {
+		sampleId: sample.sampleId,
+		channels: ["A", "B"],
+		minEvents: 1,
+		controls: [
+			{ primaryDetector: "B", positive: population(2), negative: population(0) },
+			{ primaryDetector: "A", positive: population(1), negative: population(0) },
+		],
+	});
+	const estimationDeadline = Date.now() + 20_000;
+	let estimationStatus;
+	do {
+		estimationStatus = await call("get_job", { jobId: estimation.jobId });
+		if (["succeeded", "failed", "cancelled"].includes(estimationStatus.state)) break;
+		if (Date.now() > estimationDeadline) throw new Error("Control estimation did not finish");
+		await delay(10);
+	} while (estimationStatus.state === "queued" || estimationStatus.state === "running");
+	assert.equal(estimationStatus.state, "succeeded", JSON.stringify(estimationStatus));
+	const estimationReceipt = await call("get_receipt", { jobId: estimation.jobId });
+	assert.deepEqual(estimationReceipt.estimatedMatrix.matrix, [1, 0.25, -0.125, 1]);
+	assert.equal(estimationReceipt.distinctPopulationCount, 3);
+	assert.equal(estimationReceipt.buildId, capabilities.buildId);
+	const estimatedPreview = await call("preview_fcs", {
+		sampleId: sample.sampleId,
+		compensationId: estimationStatus.result.compensationId,
+		limit: 1,
+	});
+	assert.ok(estimatedPreview);
 	console.log(
 		JSON.stringify({
 			result: "passed",
-			check: "built Node studio: conventional compensation and acquisition/spectral OLS exports",
+			check: "built Node studio: compensation, acquisition/OLS exports and control estimation",
 			inputHash: sample.sha256,
 			outputHash: status.result.sha256,
 		}),

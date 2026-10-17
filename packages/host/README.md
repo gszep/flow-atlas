@@ -163,6 +163,66 @@ Nonlinear Time, weighted WLS/WOLS, SpectralFX and native FlowJo parity remain ou
 this implementation. Failures identify processing stage and source chunk coordinates;
 no partially processed FCS is published.
 
+## Estimating conventional compensation from controls
+
+`start_control_estimation` starts a bounded GPU job with an explicit application
+`sampleId`, 1–32 unique detector `channels`, and exactly one control pair per
+detector. Each pair has `primaryDetector`, `positive` and `negative`; each population
+binds an imported `sampleId`, optional `startEvent`/`eventCount`, and up to 16
+inclusive channel ranges (`min`/`max`, null for unbounded). Bounds must be exactly
+representable finite F32 values. Ranges are ANDed in the selected input space;
+they are analysis selections, not edits to workspace gates. Negative controls may
+be separate files or shared populations. Identical population definitions reuse
+one summary within the job.
+
+```json
+{
+  "sampleId": "<application sample ID>",
+  "channels": ["D0", "D1"],
+  "minEvents": 100,
+  "controls": [
+    {"primaryDetector": "D0", "positive": {"sampleId": "<D0 control ID>"},
+     "negative": {"sampleId": "<unstained ID>"}},
+    {"primaryDetector": "D1", "positive": {"sampleId": "<D1 control ID>"},
+     "negative": {"sampleId": "<unstained ID>"}}
+  ]
+}
+```
+
+`minEvents` is required for each positive and negative population; the example's
+100 is illustrative, not a universal biological cutoff. `minPrimarySeparation`
+defaults to zero and is rounded to F32; primary separation must strictly exceed it.
+The profile is `conventional-median-difference-primary-f32-v1`: exact lower/upper
+F32 median ranks are selected in four replay passes, paired endpoint differences
+are averaged on GPU, and each control row is divided by its primary separation.
+Negative and above-one coefficients remain intact. Nonfinite selected targets,
+empty/undersupported populations, subnormal endpoints, unsafe arithmetic and
+singular/poorly conditioned matrices reject before a usable matrix is published.
+
+Top-level `inputSpace` applies to all controls and the application sample.
+For `linearized`, top-level `acquisition` configures the target; each population's
+optional `acquisition` configures that source independently. Ordinary gains and
+log metadata come from each file. Stored detector values must be linear/unit-gain.
+Temporal acquisition parameters cannot participate as compensation detectors.
+Known instrument model/serial and detector voltage disagreements reject; missing
+metadata is reported explicitly and is not proof of biological compatibility.
+
+Poll `get_job`: progress counts **event-visits**, including all four median passes,
+not unique events. Success returns `result.compensationId` for preview/export in
+the current host instance. `outputs/<jobId>/matrix.json` and `receipt.json` are
+published together. Receipts retain source hashes, exact selections/context,
+support, endpoints, numerical and conditioning diagnostics, recipe hash and runtime
+identity. Export receipts link the estimation receipt. After restarting a host,
+the artifacts/receipts remain readable; matrix registrations are session-local,
+so explicitly re-register the persisted matrix and its context for further use.
+
+This operation does not infer positive gates, establish biological QC, estimate
+spectral references or implement AutoSpill/AutoSpread. Native FlowJo parity remains
+unverified. The job recipe is limited to 64 KiB and each source range to 2^32−1 rows.
+Receipts must fit the 256 KiB MCP budget before publication. Oversized evidence
+fails the job; if the failure receipt also exceeds that budget, it explicitly
+records endpoint/candidate evidence omission and retains the recipe and error.
+
 ## Numerical and artifact contracts
 
 - FCS list-mode 2.0/3.0/3.1 input, strict UTF-8 TEXT, and F/I/D decoding to F32.
