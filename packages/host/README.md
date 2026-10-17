@@ -337,7 +337,9 @@ Optional `startEvent`/`eventCount` restrict the source window before gating.
 
 The threshold is illustrative. `summary.count` is selected support; `lower` and
 `upper` follow `summary.channels` order. `summary.ranks` explicitly reports the
-zero-based central indices: `floor((count−1)/2)` and `floor(count/2)`. For odd counts
+zero-based central indices: `floor((count−1)/2)` and `floor(count/2)`. Each
+channel is ranked independently; indices refer to sorted channel values,
+not original event positions or one representative event. For odd counts
 the endpoints coincide. For even counts they are the two central observed values;
 **no midpoint average is computed**. These are order statistics, not confidence
 bounds or a claim of FlowJo `MedianExact` parity.

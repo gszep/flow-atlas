@@ -96,7 +96,15 @@ population/channel recipe over a distinct sample list, with indexed endpoints an
 per-sample support/ranks. It reuses the existing runner and numerical conventions;
 empty or invalid sources fail the whole atomic table rather than being imputed.
 Independent source review, 432 local tests, host build and compiled RPC smoke
-passed; final-head CI precedes merge.
+passed. Final-head Linux CI `39052144927` passed 389 tests with ten private-oracle
+skips; PR #9 merged at `440fa09`.
+
+The median-path measurement checkpoint verified exact analytic endpoint vectors
+for 64-MiB and 1-GiB synthetic inputs, including distinct central Index values at
+ranks above 2^24. The larger selected-triangle run took 30.581 s for four visits per
+source row at 389.461 MiB process lifetime peak RSS. This is one population's
+two-gate dependency closure, not full-128-gate or cohort throughput; qualifications
+and reproduction are in `docs/reference/population-median-scalability.md`.
 
 ### Acquisition / spectral wave
 
