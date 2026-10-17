@@ -729,3 +729,18 @@ oracle cases had maximum observed abundance/residual errors about 1.40e-6/1.07e-
 diagnostic matrices rejected. Accepted acquisition cases had maximum normalized
 error 1.23e-7 against FlowIO, and nonlinear Time rejected. These are fixture-specific
 Metal measurements, not universal f32 error bounds or spectral/WOLS equivalence.
+## 2026-10-17 — Acquisition/OLS integration validation and expansion benchmark
+
+**Measured:** composed-host review approved `acd7400`, including independent
+257-event/1 KiB checks for reordered detectors, no-residual/full/derived-only/
+original-only/mixed export, defensive ownership and cancellation. Local validation
+passed 293 tests, lint/typecheck, host/UI builds and the compiled Node workflow.
+Linux/llvmpipe run `38996665556` passed 250 tests with ten private-oracle skips.
+
+The combined gain/time → 3-detector/2-fluor OLS → export workload processed 50M
+events, expanding 20 input columns (4 GB) to 23 output columns (4.6 GB). Peak host
+RSS was 436,346,880 bytes; import took 30.862 s and export 83.443 s. Source/build,
+watchdog, sampled-error and measurement limitations are recorded in
+`reference/spectral-acquisition-validation.md`. This confirms bounded host-memory
+behavior for that workload, not exhaustive numerical/vendor parity or a relative
+Rust advantage. Current stage readback/upload is included in the measurement.
