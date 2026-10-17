@@ -8,10 +8,14 @@ import gatherSrc from "./kernels/gather.wgsl?raw";
 import setbitSrc from "./kernels/setbit.wgsl?raw";
 import somAccumulateSrc from "./kernels/som_accumulate.wgsl?raw";
 import somMapSrc from "./kernels/som_map.wgsl?raw";
+import spectralSrc from "./kernels/spectral.wgsl?raw";
+import spectralQrSrc from "./kernels/spectral_qr.wgsl?raw";
 import transformSrc from "./kernels/transform.wgsl?raw";
 
 export const KERNEL_SOURCES = {
 	acquisition: acquisitionSrc,
+	spectral: spectralSrc,
+	spectral_qr: spectralQrSrc,
 	compensation: compensationSrc,
 	compensation_inverse: compensationInverseSrc,
 	boolean: booleanSrc,

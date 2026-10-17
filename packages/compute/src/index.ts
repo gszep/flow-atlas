@@ -8,4 +8,5 @@ export * from "./gating.js";
 export * from "./kernels.js";
 export * from "./reference.js";
 export * from "./som.js";
+export * from "./spectral.js";
 export * from "./transform.js";
