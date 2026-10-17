@@ -1,3 +1,4 @@
+export * from "./acquisition.js";
 export * from "./boolean.js";
 export * from "./buffers.js";
 export * from "./compensation.js";
