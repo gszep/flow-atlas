@@ -1,5 +1,20 @@
 # Handoff
 
+## Explicit control-derived compensation (2026-10-17)
+
+`start_control_estimation` composes bounded four-pass GPU median rank selection,
+primary-normalized median differences and matrix conditioning into an agent job.
+Positive/negative populations bind independent immutable files, event windows,
+inclusive selections and explicit acquisition contexts. Successful jobs publish
+matrix JSON and replayable receipts atomically and return a compensation ID usable
+by preview/export. See `packages/host/README.md` for the contract and limits.
+
+Primitive and composed-host reviews are complete. Local validation passed 341
+tests, lint/typecheck, host/UI builds and the compiled RPC workflow; final-head
+Linux CI is required before merge. Native static coverage now includes 71 unique entrypoints; the evidence
+boundary is in `docs/reference/control-compensation-research.md`. This does not
+establish FlowJo parity, automated gating, AutoSpill or biological QC.
+
 ## Explicit acquisition and spectral OLS (2026-10-17)
 
 The agent API now exposes `register_unmixing` and explicit stored/linearized input
@@ -14,7 +29,7 @@ Local checks passed 293 tests; Linux CI passed 250 with ten private-oracle skips
 The combined 4 GB → 4.6 GB workload used about 436 MB host RSS. Numerical/performance
 scope and source identities: `docs/reference/spectral-acquisition-validation.md`.
 
-Weighted WLS/WOLS, SpectralFX, automatic control-derived reference estimation,
+Weighted WLS/WOLS, SpectralFX, control-derived spectral reference estimation,
 streaming gate/reduction jobs and GPU-resident stage fusion remain follow-ups.
 
 ## Native FCS and agent studio (2026-10-17)

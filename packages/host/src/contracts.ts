@@ -44,6 +44,22 @@ const processing = {
 		})
 		.optional(),
 };
+const controlPopulation = z.strictObject({
+	sampleId: id,
+	startEvent: index.optional(),
+	eventCount: index.optional(),
+	acquisition: processing.acquisition,
+	selection: z
+		.array(
+			z.strictObject({
+				channel: z.string().min(1).max(256),
+				min: z.number().finite().nullable(),
+				max: z.number().finite().nullable(),
+			}),
+		)
+		.max(16)
+		.optional(),
+});
 export const operationSchemas = {
 	list_capabilities: z.strictObject({}),
 	import_fcs: z.strictObject({ path: z.string().min(1) }),
@@ -111,6 +127,30 @@ export const operationSchemas = {
 		startEvent: index.optional(),
 		eventCount: index.optional(),
 		outputName: z.string().optional(),
+	}),
+	start_control_estimation: z.strictObject({
+		...processing,
+		sampleId: id.describe(
+			"Application target; its exact channel identities and input context bind the resulting conventional matrix.",
+		),
+		channels: z.array(z.string().min(1).max(256)).min(1).max(32),
+		controls: z
+			.array(
+				z.strictObject({
+					primaryDetector: z.string().min(1).max(256),
+					positive: controlPopulation,
+					negative: controlPopulation,
+				}),
+			)
+			.min(1)
+			.max(32),
+		minEvents: z
+			.number()
+			.int()
+			.min(1)
+			.max(0xffffffff)
+			.describe("Explicit per-population support policy, not a universal biological cutoff."),
+		minPrimarySeparation: z.number().finite().nonnegative().optional(),
 	}),
 	get_job: z.strictObject({ jobId: id }),
 	cancel_job: z.strictObject({ jobId: id }),

@@ -9,6 +9,8 @@ import {
 } from "./contracts.js";
 
 export const operationDescriptions: Record<OperationName, string> = {
+	start_control_estimation:
+		"Estimate a conventional primary-normalized median-difference matrix from explicit positive/negative FCS populations. GPU rank selection and arithmetic, with support/separation and conditioning diagnostics. Not AutoSpill or vendor parity.",
 	list_capabilities:
 		"Discover supported data spaces, algorithms, resource bounds and explicit unsupported operations. No CPU fallback or weighted unmixing is implied.",
 	import_fcs: "Import an FCS file relative to the backend's configured input root.",

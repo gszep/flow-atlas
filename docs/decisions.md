@@ -857,3 +857,45 @@ test fixture wrongly expecting rejection at the exactly permitted coefficient
 ceiling. The fixture and invocation were corrected, not the acceptance policy.
 Full final logs/timings are in the session's approved temporary directory under
 `control-estimator-validation-ses_eb8240337ffeYisU6UJT6khk5w`.
+
+## 2026-10-17 — Agent jobs for explicit control-derived compensation
+
+**Decision:** compose the reviewed GPU rank and median-difference primitives in
+`start_control_estimation`. Bind separate immutable positive/negative sources,
+exact selections, source-specific acquisition settings and application context.
+Require caller support policy, retain signed coefficients, and run existing GPU
+compensation conditioning before publication. This profile estimates conventional
+square matrices, not spectral references, automatic gates or AutoSpill.
+
+The host caps detectors at 32 and recipes at 64 KiB for bounded protocol evidence;
+shared population definitions reuse summaries. Four replay passes report event
+visits. Sources retain pinned descriptors with verified content hashes; only the
+current population reader is retained. Metadata compatibility compares reported
+instrument/serial/voltage fields, records missing values and does not claim
+biological validity. Linearized selections operate in explicit acquisition space
+without changing raw-space workspace gate definitions. Subnormal endpoints remain
+valid median ranks but receive an explicit estimator-policy rejection.
+
+Matrix JSON and receipts publish atomically; failed/cancelled runs keep diagnostics
+without registering a partial matrix. Session-local registrations include recipe
+lineage, and downstream export receipts link the estimation receipt. Persisted
+artifacts survive restart, but callers must explicitly register their matrix/context
+again. No human provenance stamps or event arrays enter workspace documents.
+
+**Verified:** primitive and host reviews passed. Host review fixes reject temporal
+detector roles and unrepresentable thresholds before work, and bound publication
+to MCP's 256 KiB evidence budget. Oversized failures explicitly omit endpoint/
+candidate details when necessary while retaining recipe/error/progress. Two real
+MCP boundary fixtures exercise both retained and compacted failure evidence.
+
+**Measured local validation:** 341 tests in 25 files passed, including 13 composed
+control-job tests. Lint/typecheck ran concurrently (1.261/1.261 s); full tests and
+the dependent UI build ran concurrently (42.470/3.485 s), followed by compiled
+Node/RPC smoke (1.943 s). Total batch 45.677 s; runnable queue delay <0.001 s each.
+Vitest reports transform 1.04 s, setup 0 s, import 3.32 s and assertions 30.64 s.
+At most two jobs with 1536 MiB heaps and one GPU test worker/native thread were
+used. The isolated dependency setup (3.3 s) and host build preceded this batch;
+the immutable host build was reused by smoke. Logs/timings are under the session's
+approved temporary directory at `control-final-validation`. Remote final-head CI
+remains required before merge; no large-file control-estimation benchmark or
+native numerical parity is claimed.
