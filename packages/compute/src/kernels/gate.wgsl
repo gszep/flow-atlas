@@ -1,6 +1,7 @@
 // Evaluate one 2-D gate (polygon or rectangle) over a window of events, AND with the parent mask,
 // write a 0/1 mask, and count members (workgroup reduction + one atomic per workgroup).
-// Coordinates are in the space the gate was drawn in (transformed display space).
+// Event columns and geometry must use the same caller-selected coordinate space.
+// The UI uses display space; explicit host count jobs use raw stored F32 space.
 
 struct Params {
   count: u32,

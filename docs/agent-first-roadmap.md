@@ -54,6 +54,22 @@ families below or availability of a studio/MCP transport.
 
 ## Capability families and agent-oriented delivery
 
+### Delivered control estimation and next bounded milestone
+
+PR #4 (`f83fd159`) delivers explicit conventional control-derived compensation:
+independent positive/negative populations, exact GPU median rank endpoints,
+primary-normalized differences, conditioning and immutable job receipts. Local
+validation passed 341 tests; final-head Linux run `39004912413` passed 298 tests
+with ten private-oracle skips. This is a named mathematical profile, not AutoSpill
+or native FlowJo parity.
+
+The next implemented milestone is **streamed population counts and frequencies**.
+`start_gate_counts` accepts an explicit stored-F32 gate recipe against an immutable
+FCS sample and returns counts with parent/root denominators and durable provenance.
+It reuses existing GPU geometric/Boolean semantics, with bounded chunks and
+explicit unsupported cases. Independent review and 360 local tests passed,
+including real MCP and compiled RPC workflows; final-head CI precedes merge.
+
 ### Acquisition / spectral wave
 
 `register_unmixing` adds named detector/fluorochrome OLS with optional L2 residual.

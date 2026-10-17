@@ -1,5 +1,22 @@
 # Handoff
 
+## Streamed population counts (2026-10-17)
+
+`start_gate_counts` adds explicit stored-F32 rectangle/polygon/Boolean recipes,
+streamed through existing GPU membership kernels. Results include counts and both
+parent/selected-root frequencies; empty denominators are null. Counts and receipts
+publish atomically through the existing job lifecycle. This does not edit workspace
+gates or silently apply acquisition, compensation or display transforms.
+
+The runner bounds event/column/mask allocation by chunk sizing, pins source identity,
+and records the exact recipe and named numerical policy. See
+`packages/host/README.md` for geometry limits and nonfinite/Boolean semantics.
+Independent source review passed. Local validation passed 360 tests in 28 files,
+lint/typecheck, host/UI builds and compiled RPC smoke. Nineteen new tests cover
+multi-chunk geometric/Boolean counts, numerical extremes, parent/root denominators,
+admission, cancellation, MCP, restart and terminal-record failure after publication.
+Final-head Linux CI is required before merge.
+
 ## Explicit control-derived compensation (2026-10-17)
 
 `start_control_estimation` composes bounded four-pass GPU median rank selection,
@@ -10,8 +27,9 @@ matrix JSON and replayable receipts atomically and return a compensation ID usab
 by preview/export. See `packages/host/README.md` for the contract and limits.
 
 Primitive and composed-host reviews are complete. Local validation passed 341
-tests, lint/typecheck, host/UI builds and the compiled RPC workflow; final-head
-Linux CI is required before merge. Native static coverage now includes 71 unique entrypoints; the evidence
+tests, lint/typecheck, host/UI builds and the compiled RPC workflow. Final-head
+Linux CI run `39004912413` passed 298 tests with ten private-oracle skips; PR #4
+merged at `f83fd159`. Native static coverage now includes 71 unique entrypoints; the evidence
 boundary is in `docs/reference/control-compensation-research.md`. This does not
 establish FlowJo parity, automated gating, AutoSpill or biological QC.
 
@@ -30,7 +48,7 @@ The combined 4 GB → 4.6 GB workload used about 436 MB host RSS. Numerical/perf
 scope and source identities: `docs/reference/spectral-acquisition-validation.md`.
 
 Weighted WLS/WOLS, SpectralFX, control-derived spectral reference estimation,
-streaming gate/reduction jobs and GPU-resident stage fusion remain follow-ups.
+population statistics beyond counts and GPU-resident stage fusion remain follow-ups.
 
 ## Native FCS and agent studio (2026-10-17)
 

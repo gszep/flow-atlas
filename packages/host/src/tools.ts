@@ -9,6 +9,8 @@ import {
 } from "./contracts.js";
 
 export const operationDescriptions: Record<OperationName, string> = {
+	start_gate_counts:
+		"Count explicit raw stored-F32 rectangle, polygon and Boolean populations in streamed immutable FCS input. Returns parent/root denominators and frequencies through a job receipt; no display transforms or workspace edits.",
 	start_control_estimation:
 		"Estimate a conventional primary-normalized median-difference matrix from explicit positive/negative FCS populations. GPU rank selection and arithmetic, with support/separation and conditioning diagnostics. Not AutoSpill or vendor parity.",
 	list_capabilities:

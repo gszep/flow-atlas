@@ -223,6 +223,54 @@ Receipts must fit the 256 KiB MCP budget before publication. Oversized evidence
 fails the job; if the failure receipt also exceeds that budget, it explicitly
 records endpoint/candidate evidence omission and retains the recipe and error.
 
+## Streamed population counts
+
+`start_gate_counts` evaluates an explicit gate recipe against an immutable imported
+sample. Set `coordinateSpace: "stored-f32"`; optionally restrict `startEvent` and
+`eventCount`. Gates have unique `id`, `name`, nullable `parentId`, exact named
+`dimensions`, and rectangle, polygon or Boolean geometry. Rectangle bounds use
+null for unbounded axes. Boolean geometry names `op: "and" | "or" | "not"` and
+referenced gate IDs. Gate order does not define dependency order.
+
+```json
+{
+  "sampleId": "<imported sample ID>",
+  "coordinateSpace": "stored-f32",
+  "gates": [
+    {"id": "positive", "name": "Positive", "parentId": null,
+     "dimensions": ["D0"], "geometry": {"type": "rectangle", "min": [100], "max": [null]}},
+    {"id": "negative", "name": "Complement", "parentId": null,
+     "dimensions": [], "geometry": {"type": "boolean", "op": "not", "refs": ["positive"]}}
+  ]
+}
+```
+
+The threshold is illustrative; callers supply their own scientifically justified recipe.
+
+The receipt's `summary.counts` reports population counts and explicit
+`parentCount`/`rootCount` denominators in request order. Each row has `id`, `name`,
+`parentId`, `count`, `frequencyOfParent` and `frequencyOfRoot`.
+Frequencies are fractions, not percentages; an empty denominator produces null.
+The selected root is the requested event window, not necessarily the whole file.
+Jobs publish `counts.json` and `receipt.json` together, and use the existing
+`get_job`, `cancel_job` and `get_receipt` operations. Counts are computed on GPU
+in bounded chunks; event arrays and membership masks are not returned in receipts.
+
+This contract does not edit workspace gates or apply display transforms. It uses
+stored decoded F32 values exactly as declared, including any processing already
+present in the imported file. To count a newly compensated/linearized/unmixed
+artifact, export it through the existing pipeline and import that artifact explicitly.
+The recipe limit is 64 KiB, with up to 128 gates and 256 vertices per polygon.
+All coordinates must be exactly representable normal-or-zero F32 values. Rectangle
+edges are inclusive; null bounds use exact finite F32 extrema. Polygon vertices
+are limited to magnitude ≤2³⁰, with each nonhorizontal edge's |dy| ≥2⁻³⁰. A GPU
+bounding box excludes extreme events before the existing even-odd polygon test,
+bounding crossing arithmetic. F32 rounding/possible subnormal flushing still apply;
+this is not exact-real boundary geometry or a FlowJo parity claim. Geometric gates
+exclude NaN and infinities; Boolean NOT can include those events within its parent.
+Unsupported geometry, missing channels/references and cyclic dependencies reject
+before admission rather than silently skipping populations.
+
 ## Numerical and artifact contracts
 
 - FCS list-mode 2.0/3.0/3.1 input, strict UTF-8 TEXT, and F/I/D decoding to F32.
@@ -276,7 +324,7 @@ await studio.close();
 ```
 
 `AnalysisService.invoke(name, args, signal?)` receives validated arguments for the
-twelve operations in exported `operationSchemas`. `AnalysisError(code, message,
+operations in exported `operationSchemas`. `AnalysisError(code, message,
 details?)` supplies public, JSON-safe errors; never put secrets in these fields.
 Unexpected exceptions become `INTERNAL_ERROR` without exposing their messages.
 The backend owns file roots, data, GPU resources, export jobs and receipts. It

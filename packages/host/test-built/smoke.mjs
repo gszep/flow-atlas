@@ -208,10 +208,41 @@ try {
 		limit: 1,
 	});
 	assert.ok(estimatedPreview);
+	const countsJob = await call("start_gate_counts", {
+		sampleId: sample.sampleId,
+		coordinateSpace: "stored-f32",
+		gates: [
+			{
+				id: "low-a",
+				name: "Low A",
+				parentId: null,
+				dimensions: ["A"],
+				geometry: { type: "rectangle", min: [null], max: [5] },
+			},
+		],
+	});
+	const countsDeadline = Date.now() + 20_000;
+	let countsStatus;
+	do {
+		countsStatus = await call("get_job", { jobId: countsJob.jobId });
+		if (["succeeded", "failed", "cancelled"].includes(countsStatus.state)) break;
+		if (Date.now() > countsDeadline) throw new Error("Population counts did not finish");
+		await delay(10);
+	} while (countsStatus.state === "queued" || countsStatus.state === "running");
+	assert.equal(countsStatus.state, "succeeded", JSON.stringify(countsStatus));
+	const countsReceipt = await call("get_receipt", { jobId: countsJob.jobId });
+	assert.equal(countsReceipt.operation, "gate-counts");
+	assert.equal(countsReceipt.eventCount, 2);
+	assert.equal(countsReceipt.summary.counts[0].count, 1);
+	assert.equal(countsReceipt.summary.counts[0].parentCount, 2);
+	assert.equal(countsReceipt.summary.counts[0].frequencyOfRoot, 0.5);
+	assert.equal(countsReceipt.buildId, capabilities.buildId);
+	const countsArtifact = JSON.parse(await readFile(join(root, countsStatus.result.path), "utf8"));
+	assert.deepEqual(countsArtifact.summary, countsReceipt.summary);
 	console.log(
 		JSON.stringify({
 			result: "passed",
-			check: "built Node studio: compensation, acquisition/OLS exports and control estimation",
+			check: "built Node studio: compensation, acquisition/OLS, control estimation and gate counts",
 			inputHash: sample.sha256,
 			outputHash: status.result.sha256,
 		}),
