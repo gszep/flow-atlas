@@ -12,14 +12,7 @@ import {
 	prepareCompensation,
 } from "@flow-atlas/compute";
 import { type FcsFile, openFcs, writeFcs } from "@flow-atlas/fcs";
-import {
-	ArtifactStore,
-	canonical,
-	digest,
-	fileSource,
-	hashFile,
-	writeAll,
-} from "./artifact-store.js";
+import { ArtifactStore, canonical, digest, fileSource, writeAll } from "./artifact-store.js";
 import {
 	AnalysisError,
 	type AnalysisService,
@@ -353,7 +346,7 @@ class FcsAnalysis implements AnalysisService {
 					throw new AnalysisError("INVALID_RANGE", "Preview starts past the sample");
 				const count = Math.min(args.limit ?? 10, sample.metadata.eventCount - offset);
 				const comp = this.compensation(sample, args.compensationId);
-				const handle = await fileSource(sample.path);
+				const handle = await fileSource(sample.path, this.store.root);
 				let plan: CompensationPlan | undefined;
 				try {
 					if (handle.identity !== sample.identity)
@@ -503,8 +496,9 @@ class FcsAnalysis implements AnalysisService {
 		if (!this.catalog.has(id) && this.catalog.size >= 4096)
 			throw new AnalysisError("SAMPLE_LIMIT", "Session sample catalog limit reached");
 		const path = this.store.inputPath(id);
-		const handle = await fileSource(path);
+		const handle = await fileSource(path, this.store.root);
 		try {
+			await handle.verify(id, signal);
 			const reader = await openFcs(handle.source, signal ? { signal } : {});
 			const metadata = reader.metadata;
 			if (Buffer.byteLength(JSON.stringify(metadata.keywords)) > 1024 * 1024)
@@ -536,8 +530,6 @@ class FcsAnalysis implements AnalysisService {
 			this.samples.set(id, found);
 			return found;
 		}
-		if ((await hashFile(this.store.inputPath(id), signal)) !== id)
-			throw new AnalysisError("INTEGRITY_ERROR", "Stored source no longer matches its hash");
 		const name = this.catalog.get(id)?.basename;
 		return this.loadSample(id, typeof name === "string" ? name : `${id}.fcs`, signal);
 	}
@@ -721,7 +713,8 @@ class FcsAnalysis implements AnalysisService {
 		signal: AbortSignal,
 	): Promise<Float32Array> {
 		return this.withGpu(
-			(gpu) => compensateChunk(gpu.kernels, plan, data, Math.min(this.chunkBytes, gpu.maxBinding)),
+			// The event array is already chunk-bounded; persistent matrix buffers use the device limit.
+			(gpu) => compensateChunk(gpu.kernels, plan, data, gpu.maxBinding),
 			signal,
 		);
 	}
@@ -814,7 +807,7 @@ class FcsAnalysis implements AnalysisService {
 				plannedCompensation: job.plannedCompensation,
 			});
 			const sample = await this.sample(job.request.sampleId, signal);
-			source = await fileSource(sample.path);
+			source = await fileSource(sample.path, this.store.root);
 			await source.verify(sample.id, signal);
 			const comp = this.compensation(sample, job.request.compensationId);
 			const metadata = this.exportMetadata(sample, job.request);

@@ -7,6 +7,8 @@ import type { FcsByteSource } from "@flow-atlas/fcs";
 import { AnalysisError } from "./contracts.js";
 
 const COPY_BYTES = 1024 * 1024;
+// Nonblocking admission prevents special files from hanging before fstat can reject them.
+const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 export const isDigest = (value: string): boolean => /^[a-f0-9]{64}$/.test(value);
 
 export function canonical(value: unknown): string {
@@ -29,6 +31,31 @@ function inside(root: string, path: string): boolean {
 	return r === "" || (!isAbsolute(r) && r !== ".." && !r.startsWith(`..${sep}`));
 }
 
+async function openRegular(path: string, root?: string) {
+	const resolved = await realpath(path);
+	if (root !== undefined && !inside(root, resolved))
+		throw new AnalysisError("PATH_OUTSIDE_ROOT", "File path escapes the workspace");
+	const handle = await open(resolved, READ_FLAGS);
+	try {
+		const info = await handle.stat();
+		if (!info.isFile() || !Number.isSafeInteger(info.size))
+			throw new AnalysisError("INVALID_FILE", "Expected a regular file with a safe byte length");
+		const checkPath = async () => {
+			const current = await realpath(path);
+			if (root !== undefined && !inside(root, current))
+				throw new AnalysisError("PATH_OUTSIDE_ROOT", "File path escapes the workspace");
+			const currentInfo = await stat(current);
+			if (current !== resolved || currentInfo.dev !== info.dev || currentInfo.ino !== info.ino)
+				throw new AnalysisError("INPUT_CHANGED", "File path changed while being opened or read");
+		};
+		await checkPath();
+		return { handle, info, checkPath };
+	} catch (error) {
+		await handle.close();
+		throw error;
+	}
+}
+
 export async function writeAll(handle: FileHandle, bytes: Uint8Array): Promise<void> {
 	let offset = 0;
 	while (offset < bytes.byteLength) {
@@ -38,15 +65,18 @@ export async function writeAll(handle: FileHandle, bytes: Uint8Array): Promise<v
 	}
 }
 
-export async function hashFile(path: string, signal?: AbortSignal): Promise<string> {
-	const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+export async function hashFile(path: string, signal?: AbortSignal, root?: string): Promise<string> {
+	const { handle, checkPath } = await openRegular(path, root);
 	try {
 		const hash = createHash("sha256");
 		const buffer = Buffer.alloc(COPY_BYTES);
 		for (;;) {
 			signal?.throwIfAborted();
 			const { bytesRead } = await handle.read(buffer);
-			if (!bytesRead) return hash.digest("hex");
+			if (!bytesRead) {
+				await checkPath();
+				return hash.digest("hex");
+			}
 			hash.update(buffer.subarray(0, bytesRead));
 		}
 	} finally {
@@ -54,23 +84,23 @@ export async function hashFile(path: string, signal?: AbortSignal): Promise<stri
 	}
 }
 
-export async function fileSource(path: string): Promise<{
+export async function fileSource(
+	path: string,
+	root?: string,
+): Promise<{
 	source: FcsByteSource;
 	identity: string;
 	verify(expected: string, signal?: AbortSignal): Promise<void>;
 	assertUnchanged(): Promise<void>;
 	close(): Promise<void>;
 }> {
-	const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+	const { handle, info, checkPath } = await openRegular(path, root);
 	try {
-		const info = await handle.stat();
-		if (!info.isFile() || !Number.isSafeInteger(info.size)) {
-			throw new AnalysisError("INVALID_FILE", "Expected a regular file with a safe byte length");
-		}
 		const fingerprint = (value: typeof info) =>
 			`${value.dev}:${value.ino}:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;
 		const identity = fingerprint(info);
 		const assertUnchanged = async () => {
+			await checkPath();
 			if (fingerprint(await handle.stat()) !== identity)
 				throw new AnalysisError("INPUT_CHANGED", "Input artifact changed while being read");
 		};
@@ -181,13 +211,10 @@ export class ArtifactStore {
 		const input = await realpath(join(this.root, path));
 		if (!inside(this.root, input))
 			throw new AnalysisError("PATH_OUTSIDE_ROOT", "Input path escapes the workspace");
-		const source = await open(input, constants.O_RDONLY | constants.O_NOFOLLOW);
+		const { handle: source, info: before, checkPath } = await openRegular(input, this.root);
 		const temp = join(this.temporary, `${randomUUID()}.input`);
 		let target: FileHandle | undefined;
 		try {
-			const before = await source.stat();
-			if (!before.isFile() || !Number.isSafeInteger(before.size))
-				throw new AnalysisError("INVALID_FILE", "Input must be a regular file");
 			target = await open(temp, "wx", 0o600);
 			const hash = createHash("sha256");
 			const buffer = Buffer.alloc(COPY_BYTES);
@@ -208,6 +235,7 @@ export class ArtifactStore {
 				offset += bytesRead;
 			}
 			const after = await source.stat();
+			await checkPath();
 			if (
 				before.size !== after.size ||
 				before.mtimeMs !== after.mtimeMs ||
@@ -229,7 +257,7 @@ export class ArtifactStore {
 				await link(temp, destination);
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-				if ((await hashFile(destination, signal)) !== sha256)
+				if ((await hashFile(destination, signal, this.root)) !== sha256)
 					throw new AnalysisError(
 						"INTEGRITY_ERROR",
 						"Stored input does not match its content hash",
@@ -276,9 +304,9 @@ export class ArtifactStore {
 	}
 
 	private async readRecord(path: string): Promise<unknown> {
-		const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+		const { handle, info, checkPath } = await openRegular(path, this.root);
 		try {
-			const size = (await handle.stat()).size;
+			const size = info.size;
 			if (size > 1024 * 1024)
 				throw new AnalysisError("INVALID_RECEIPT", "Run record exceeds size bound");
 			const bytes = Buffer.alloc(size);
@@ -288,6 +316,7 @@ export class ArtifactStore {
 				if (!bytesRead) throw new AnalysisError("INVALID_RECEIPT", "Run record was truncated");
 				offset += bytesRead;
 			}
+			await checkPath();
 			return JSON.parse(bytes.toString("utf8")) as unknown;
 		} finally {
 			await handle.close();

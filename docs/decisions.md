@@ -496,3 +496,21 @@ the real MCP→backend compensation/export workflow. A compiled Node-process smo
 also imported, compensated, exported, re-read and shut down successfully. Kernel,
 streaming I/O and transport changes received separate independent reviews; the
 composed backend still requires its own review and final-head CI.
+## 2026-10-17 — Composed-backend review corrections
+
+Independent review reproduced four defects on `74f4c7c`: a pre-existing receipt
+directory symlink exposed an outside-root record; cold-cache hash and metadata
+opens could be separated by replacement; FIFO import blocked before regular-file
+validation; and a 1 KiB event budget rejected an otherwise valid 17×17 matrix.
+
+Reads now check the complete canonical path and descriptor identity, use
+nonblocking read-only admission with authoritative `fstat`, and bind input hashing
+and metadata parsing to the same descriptor. Event arrays remain chunk-bounded,
+while persistent matrix bindings use the actual GPU binding limit. Regression
+tests exercise each case, including cancellation-safe FIFO cleanup and both
+preview/export with the larger matrix. The filesystem checks reject ordinary
+symlink escapes; they do not claim OS isolation from hostile same-user writers.
+
+The added descriptor verification entails another input read at import. The
+earlier 4 GB baseline is retained with its build identity; repeat the benchmark
+before attributing its timings to this corrected build.

@@ -407,6 +407,44 @@ describe("agent compensation workflow", () => {
 		await service?.close();
 		if (root) await rm(root, { recursive: true, force: true });
 	});
+	it("keeps persistent matrix size independent of a small event chunk budget", async () => {
+		const channels = Array.from({ length: 17 }, (_, index) => ({
+			index: index + 1,
+			name: `D${index}`,
+			bits: 32,
+			range: 262144,
+			amplification: [0, 0] as [number, number],
+			gain: 1,
+		}));
+		const data = Float32Array.from({ length: 17 }, (_, i) => i - 8);
+		const matrix = Float64Array.from({ length: 17 * 17 }, (_, i) =>
+			Number(Math.floor(i / 17) === i % 17),
+		);
+		await fixture(root, "seventeen.fcs", data, {
+			version: "FCS3.1",
+			eventCount: 1,
+			keywords: {},
+			channels,
+			spill: { channels: channels.map((c) => c.name), matrix, source: "$SPILLOVER" },
+		});
+		const imported = (await service.invoke("import_fcs", { path: "seventeen.fcs" })) as RecordValue;
+		const comp = (await service.invoke("register_compensation", {
+			sampleId: imported.sampleId,
+		})) as RecordValue;
+		const preview = (await service.invoke("preview_fcs", {
+			sampleId: imported.sampleId,
+			compensationId: comp.id,
+			channels: channels.map((c) => c.name),
+		})) as RecordValue;
+		expect(preview.rows).toEqual([Array.from(data)]);
+		const submitted = (await service.invoke("start_fcs_export", {
+			sampleId: imported.sampleId,
+			compensationId: comp.id,
+		})) as RecordValue;
+		const job = await terminal(service, submitted.jobId as string);
+		expect(job.state).toBe("succeeded");
+		expect((await readOutput(root, job)).data).toEqual(data);
+	});
 	it("previews and exports GPU-compensated values with explicit matrix provenance", async () => {
 		const preview = (await service.invoke("preview_fcs", {
 			sampleId,

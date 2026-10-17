@@ -203,6 +203,12 @@ random token outside this adapter (or use the studio entrypoint's private connec
 file) and distribute it only to authorized clients.
 There is no OAuth, approval flow, remote model integration or CORS wildcard.
 
+Artifact reads check canonical paths and descriptor identity; cold-cache hash
+verification and metadata parsing use the same descriptor. Special files are
+rejected through nonblocking admission before any data read. These application
+checks are not an OS sandbox against hostile same-user processes concurrently
+rewriting directory trees or managed artifacts.
+
 JSON bodies are capped at 1 MiB even without Content-Length; compressed bodies
 are unsupported. HTTP JSON responses are capped at 1 MiB. MCP tool payloads have
 a conservative 256 KiB cap to leave room for escaped text and error metadata.
