@@ -1,5 +1,18 @@
 # Handoff
 
+## Gated median-rank summaries (2026-10-18)
+
+`start_population_medians` selects one stored-F32 gate population (or explicit
+root/null selection) and reports central rank endpoints for up to 32 channels.
+It replays one pinned source four times, obtains membership from the existing GPU
+gate engine and checks gate support against the GPU median result on every pass.
+Endpoints are not averaged and are not confidence bounds or vendor parity claims.
+
+Independent compute, host and dependency-pruning reviews passed. Final local checks
+passed 417 tests in 34 files, lint/typecheck, host/UI builds and compiled gated-median
+RPC smoke. All eleven new E2E cases remain, plus eight host invariants and 22 masked
+primitive cases. Final-head Linux CI is required before merge.
+
 ## Batch population counts (2026-10-17)
 
 `start_batch_gate_counts` applies one explicit stored-F32 recipe to 1–32 distinct
@@ -13,8 +26,8 @@ causes and nested device-loss diagnostics. Maximum-row MCP and later-source fail
 regressions pass. A Buffer-backed FCS header-offset bug exposed by the fixtures was
 fixed and independently reviewed. All 376 local tests pass, including all eight
 protocol/E2E cases, plus lint/typecheck, host/UI builds and compiled RPC smoke.
-Final-head Linux CI is required before merge; see `packages/host/README.md` for
-the contract.
+Final-head Linux CI run `39036776005` passed 333 tests with ten private-oracle
+skips; PR #7 merged at `01caadc`. See `packages/host/README.md` for the contract.
 
 ## Streamed population counts (2026-10-17)
 

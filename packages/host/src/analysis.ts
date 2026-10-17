@@ -49,6 +49,12 @@ import {
 	runGateCounts,
 } from "./gate-counts.js";
 import {
+	type PopulationMedianResult,
+	type ResolvedPopulationMedians,
+	resolvePopulationMedians,
+	runPopulationMedians,
+} from "./population-medians.js";
+import {
 	type InputContext,
 	inputContext,
 	type ProcessingRequest,
@@ -91,7 +97,12 @@ interface ExportRequest extends ProcessingRequest {
 	outputName?: string | undefined;
 }
 interface Job {
-	kind?: "fcs-export" | "control-estimation" | "gate-counts" | "batch-gate-counts";
+	kind?:
+		| "fcs-export"
+		| "control-estimation"
+		| "gate-counts"
+		| "batch-gate-counts"
+		| "population-medians";
 	id: string;
 	state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
 	phase: string;
@@ -107,10 +118,11 @@ interface Job {
 	estimation?: ResolvedControls;
 	gateCounts?: ResolvedGateCounts;
 	batchCounts?: ResolvedBatchCounts;
+	populationMedians?: ResolvedPopulationMedians;
 	controlEvidence?: PopulationResult[];
 	controlCandidate?: Pick<ControlResult, "channels" | "matrix" | "estimationDiagnostics">;
 	progressDetail?:
-		| { populationId: string; pass: number }
+		| { populationId: string | null; pass: number }
 		| { sampleIndex: number; sampleId: string; sampleProcessedEvents: number };
 	abort: AbortController;
 	error?: { code: string; message: string; details?: unknown };
@@ -277,6 +289,8 @@ class FcsAnalysis implements AnalysisService {
 						outputs: "appended fluorochromes and optional L2 residual",
 					},
 					limits: {
+						maxPopulationMedianChannels: 32,
+						maxPopulationMedianSourceRows: 0xffffffff,
 						maxBatchCountSamples: 32,
 						maxBatchCountRows: 512,
 						maxGateVertices: 256,
@@ -628,6 +642,42 @@ class FcsAnalysis implements AnalysisService {
 					this.pendingJobs--;
 				}
 			}
+			case "start_population_medians": {
+				const request = operationSchemas.start_population_medians.parse(input);
+				const sample = await this.sample(request.sampleId, signal);
+				const resolved = resolvePopulationMedians(request, sample.metadata);
+				signal.throwIfAborted();
+				if (this.queue.length + this.pendingJobs >= 16)
+					throw new AnalysisError("QUEUE_FULL", "Analysis queue is full");
+				this.pendingJobs++;
+				const job: Job = {
+					kind: "population-medians",
+					id: randomUUID(),
+					state: "queued",
+					phase: "queued",
+					processedEvents: 0,
+					totalEvents: resolved.totalEventVisits,
+					createdAt: new Date().toISOString(),
+					enqueuedAt: performance.now(),
+					request: { sampleId: request.sampleId },
+					inputContext: { inputSpace: "stored" },
+					populationMedians: resolved,
+					abort: new AbortController(),
+				};
+				try {
+					await this.store.saveRun(job.id, { ...this.jobRecord(job), populationMedians: resolved });
+					signal.throwIfAborted();
+					this.jobs.set(job.id, job);
+					this.queue.push(job);
+					queueMicrotask(() => this.pump());
+					return this.jobRecord(job);
+				} catch (error) {
+					await rm(join(this.store.runs, `${job.id}.json`), { force: true });
+					throw error;
+				} finally {
+					this.pendingJobs--;
+				}
+			}
 			case "start_gate_counts": {
 				const request = operationSchemas.start_gate_counts.parse(input);
 				const sample = await this.sample(request.sampleId, signal);
@@ -756,6 +806,7 @@ class FcsAnalysis implements AnalysisService {
 					estimation: _estimation,
 					gateCounts: _gateCounts,
 					batchCounts: _batchCounts,
+					populationMedians: _populationMedians,
 					...status
 				} = record;
 				return {
@@ -1318,7 +1369,7 @@ class FcsAnalysis implements AnalysisService {
 		return {
 			jobId: job.id,
 			kind: job.kind ?? "fcs-export",
-			progressUnit: job.estimation ? "event-visits" : "events",
+			progressUnit: job.estimation || job.populationMedians ? "event-visits" : "events",
 			progressDetail: job.progressDetail,
 			hostInstanceId: this.instanceId,
 			live: true,
@@ -1329,6 +1380,7 @@ class FcsAnalysis implements AnalysisService {
 			createdAt: job.createdAt,
 			completedAt: job.completedAt,
 			request:
+				job.populationMedians?.request ??
 				job.batchCounts?.request ??
 				job.gateCounts?.request ??
 				job.estimation?.request ??
@@ -1353,12 +1405,18 @@ class FcsAnalysis implements AnalysisService {
 			const value = receipt as Record<string, unknown>;
 			return {
 				jobId: id,
-				kind: ["gate-counts", "batch-gate-counts", "control-estimation"].includes(
-					value.operation as string,
-				)
+				kind: [
+					"gate-counts",
+					"batch-gate-counts",
+					"population-medians",
+					"control-estimation",
+				].includes(value.operation as string)
 					? value.operation
 					: "fcs-export",
-				progressUnit: value.operation === "control-estimation" ? "event-visits" : "events",
+				progressUnit:
+					value.operation === "control-estimation" || value.operation === "population-medians"
+						? "event-visits"
+						: "events",
 				state: "succeeded",
 				phase: "complete",
 				result: value.output,
@@ -1400,10 +1458,12 @@ class FcsAnalysis implements AnalysisService {
 				this.pump();
 			});
 	}
-	private async executeGateCountJob(job: Job): Promise<void> {
+	private async executePopulationJob(job: Job): Promise<void> {
 		const batch = job.batchCounts;
-		const resolved = batch ?? (job.gateCounts as ResolvedGateCounts);
-		const operation = batch ? "batch-gate-counts" : "gate-counts";
+		const medians = job.populationMedians;
+		const resolved = medians ?? batch ?? (job.gateCounts as ResolvedGateCounts);
+		const operation = medians ? "population-medians" : batch ? "batch-gate-counts" : "gate-counts";
+		const outputName = medians ? "medians.json" : "counts.json";
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id),
 			destination = join(this.store.outputs, job.id);
@@ -1413,50 +1473,77 @@ class FcsAnalysis implements AnalysisService {
 		try {
 			signal.throwIfAborted();
 			job.state = "running";
-			job.phase = batch ? "counting-samples" : "counting-populations";
+			job.phase = medians
+				? "summarizing-population"
+				: batch
+					? "counting-samples"
+					: "counting-populations";
 			await this.store.saveRun(job.id, {
 				...this.jobRecord(job),
-				...(batch ? { batchCounts: this.batchRecord(batch) } : { gateCounts: resolved }),
+				...(medians
+					? { populationMedians: medians }
+					: batch
+						? { batchCounts: this.batchRecord(batch) }
+						: { gateCounts: resolved }),
 			});
-			const summary = await this.withGpu<BatchCountResult | GateCountResult>(
+			const summary = await this.withGpu<
+				PopulationMedianResult | BatchCountResult | GateCountResult
+			>(
 				(gpu) =>
-					batch
-						? runBatchCounts(
+					medians
+						? runPopulationMedians(
 								gpu.kernels,
 								this.store,
-								batch,
+								medians,
 								gpu.maxBinding,
 								this.chunkBytes,
 								signal,
-								(count, detail) => {
+								(count, pass) => {
 									job.processedEvents += count;
-									job.progressDetail = detail;
+									job.progressDetail = { populationId: medians.request.populationId, pass };
 								},
 							)
-						: runGateCounts(
-								gpu.kernels,
-								this.store,
-								job.gateCounts as ResolvedGateCounts,
-								gpu.maxBinding,
-								this.chunkBytes,
-								signal,
-								(count) => {
-									job.processedEvents += count;
-								},
-							),
+						: batch
+							? runBatchCounts(
+									gpu.kernels,
+									this.store,
+									batch,
+									gpu.maxBinding,
+									this.chunkBytes,
+									signal,
+									(count, detail) => {
+										job.processedEvents += count;
+										job.progressDetail = detail;
+									},
+								)
+							: runGateCounts(
+									gpu.kernels,
+									this.store,
+									job.gateCounts as ResolvedGateCounts,
+									gpu.maxBinding,
+									this.chunkBytes,
+									signal,
+									(count) => {
+										job.processedEvents += count;
+									},
+								),
 				signal,
 			);
 			signal.throwIfAborted();
 			const artifact = {
 				schemaVersion: 1,
 				jobId: job.id,
-				...(batch ? { recipe: batch.request } : { sampleId: job.gateCounts?.request.sampleId }),
+				...(medians
+					? { recipe: medians.request }
+					: batch
+						? { recipe: batch.request }
+						: { sampleId: job.gateCounts?.request.sampleId }),
 				recipeHash: resolved.recipeHash,
 				summary,
 			};
 			const encoded = Buffer.from(`${boundedJson(artifact, 256 * 1024)}\n`);
 			job.result = {
-				path: this.store.relative(join(destination, "counts.json")),
+				path: this.store.relative(join(destination, outputName)),
 				sha256: createHash("sha256").update(encoded).digest("hex"),
 				bytes: encoded.byteLength,
 				receiptPath: this.store.relative(join(destination, "receipt.json")),
@@ -1475,14 +1562,15 @@ class FcsAnalysis implements AnalysisService {
 								sha256: sample.sampleId,
 							})),
 						}
-					: { sha256: job.gateCounts?.request.sampleId },
+					: { sha256: medians?.request.sampleId ?? job.gateCounts?.request.sampleId },
 				inputContext: job.inputContext,
 				recipe: resolved.request,
 				recipeHash: resolved.recipeHash,
 				summary,
 				output: job.result,
-				eventCount: job.processedEvents,
-				progressUnit: "events",
+				...(medians
+					? { eventVisits: job.processedEvents, progressUnit: "event-visits" }
+					: { eventCount: job.processedEvents, progressUnit: "events" }),
 				gpu: { shaderHash: digest(KERNEL_SOURCES), adapter: (await this.gpuPromise)?.description },
 				nodeVersion: process.version,
 				platform: process.platform,
@@ -1492,7 +1580,7 @@ class FcsAnalysis implements AnalysisService {
 			const receiptBytes = Buffer.from(`${boundedJson(receipt, 256 * 1024)}\n`);
 			await mkdir(staging, { mode: 0o700 });
 			for (const [name, bytes] of [
-				["counts.json", encoded],
+				[outputName, encoded],
 				["receipt.json", receiptBytes],
 			] as const) {
 				const handle = await open(join(staging, name), "wx", 0o600);
@@ -1526,7 +1614,7 @@ class FcsAnalysis implements AnalysisService {
 				error: job.error,
 				processedEvents: job.processedEvents,
 				progressDetail: job.progressDetail,
-				progressUnit: "events",
+				progressUnit: medians ? "event-visits" : "events",
 			};
 		} finally {
 			try {
@@ -1772,7 +1860,8 @@ class FcsAnalysis implements AnalysisService {
 	}
 
 	private async executeJob(job: Job): Promise<void> {
-		if (job.gateCounts || job.batchCounts) return this.executeGateCountJob(job);
+		if (job.gateCounts || job.batchCounts || job.populationMedians)
+			return this.executePopulationJob(job);
 		if (job.estimation) return this.executeControlJob(job);
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id);

@@ -79,8 +79,16 @@ The next selected bounded delivery is `start_batch_gate_counts`: a shared recipe
 across explicit immutable samples, with indexed per-sample counts/frequencies and
 source lineage. It reuses the count engine and atomic job lifecycle. Source review
 and all 376 local tests passed, including real MCP and maximum-table boundaries;
-final-head CI precedes merge. This does not introduce pooled biological inference,
-display-space gating or workspace editing.
+final-head Linux CI passed 333 tests with ten private-oracle skips, and PR #7 merged
+at `01caadc`. This does not introduce pooled biological inference, display-space
+gating or workspace editing.
+
+The next implemented bounded milestone is one-population median-rank summaries. It reuses
+explicit raw-space gate recipes and the exact GPU radix primitive, with four-pass
+replay, selected support and both central order statistics. Midpoint interpolation,
+vendor-specific median conventions and batch intensity tables remain distinct work.
+Independent reviews and 417 local tests passed, including real MCP, restart,
+replay-integrity and bounded-resource cases; final-head CI precedes merge.
 
 ### Acquisition / spectral wave
 

@@ -284,11 +284,46 @@ try {
 	const batchArtifact = JSON.parse(await readFile(join(root, batchStatus.result.path), "utf8"));
 	assert.deepEqual(batchArtifact.recipe, batchReceipt.recipe);
 	assert.deepEqual(batchArtifact.summary, batchReceipt.summary);
+	const medianJob = await call("start_population_medians", {
+		sampleId: controls.sampleId,
+		coordinateSpace: "stored-f32",
+		populationId: "positive",
+		channels: ["B", "A"],
+		gates: [
+			{
+				id: "positive",
+				name: "Nonnegative A",
+				parentId: null,
+				dimensions: ["A"],
+				geometry: { type: "rectangle", min: [0], max: [null] },
+			},
+		],
+	});
+	const medianDeadline = Date.now() + 20_000;
+	let medianStatus;
+	do {
+		medianStatus = await call("get_job", { jobId: medianJob.jobId });
+		if (["succeeded", "failed", "cancelled"].includes(medianStatus.state)) break;
+		if (Date.now() > medianDeadline) throw new Error("Population medians did not finish");
+		await delay(10);
+	} while (medianStatus.state === "queued" || medianStatus.state === "running");
+	assert.equal(medianStatus.state, "succeeded", JSON.stringify(medianStatus));
+	assert.equal(medianStatus.progressUnit, "event-visits");
+	assert.equal(medianStatus.processedEvents, 12);
+	const medianReceipt = await call("get_receipt", { jobId: medianJob.jobId });
+	assert.equal(medianReceipt.operation, "population-medians");
+	assert.equal(medianReceipt.summary.count, 2);
+	assert.deepEqual(medianReceipt.summary.lower, [0, 0]);
+	assert.deepEqual(medianReceipt.summary.upper, [2, 8]);
+	assert.deepEqual(medianReceipt.summary.ranks, { indexBase: 0, lower: 0, upper: 1 });
+	const medianArtifact = JSON.parse(await readFile(join(root, medianStatus.result.path), "utf8"));
+	assert.deepEqual(medianArtifact.recipe, medianReceipt.recipe);
+	assert.deepEqual(medianArtifact.summary, medianReceipt.summary);
 	console.log(
 		JSON.stringify({
 			result: "passed",
 			check:
-				"built Node studio: compensation, acquisition/OLS, control estimation, single/batch gate counts",
+				"built Node studio: compensation, acquisition/OLS, control estimation, single/batch counts and gated medians",
 			inputHash: sample.sha256,
 			outputHash: status.result.sha256,
 		}),
