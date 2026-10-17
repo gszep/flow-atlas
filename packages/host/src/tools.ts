@@ -10,17 +10,20 @@ import {
 
 export const operationDescriptions: Record<OperationName, string> = {
 	list_capabilities:
-		"Discover backend capabilities and explicit unsupported operations. No CPU fallback or spectral unmixing is implied.",
+		"Discover supported data spaces, algorithms, resource bounds and explicit unsupported operations. No CPU fallback or weighted unmixing is implied.",
 	import_fcs: "Import an FCS file relative to the backend's configured input root.",
 	list_samples: "List a bounded page of imported sample metadata.",
 	inspect_fcs: "Inspect a bounded page of channel metadata without returning event arrays.",
-	get_spillover: "Inspect conventional spillover metadata; spectral unmixing is unsupported.",
+	get_spillover:
+		"Inspect conventional FCS spillover metadata; spectral references are supplied separately through register_unmixing.",
 	preview_fcs:
-		"Preview a bounded event/channel page, optionally using registered conventional GPU compensation; no CPU fallback.",
+		"Preview a bounded event/channel page in an explicit input space, optionally using conventional compensation or named spectral OLS. Returns channel roles and preprocessing evidence.",
 	register_compensation:
-		"Register conventional spillover compensation, using embedded metadata by default. Backend validates on GPU; spectral unmixing is unsupported.",
+		"Register conventional spillover compensation, using embedded metadata by default, bound to an explicit input space. Backend validates on GPU; use register_unmixing for spectral OLS.",
+	register_unmixing:
+		"Register named-detector/fluorochrome spectral OLS, with explicit input space and optional per-event residual. Appends derived channels; not weighted or vendor-specific unmixing.",
 	start_fcs_export:
-		"Start a backend-owned FCS export job, optionally with conventional GPU compensation. Returns job metadata, not file bytes.",
+		"Start a streamed FCS export with explicit acquisition scaling and optional conventional compensation or spectral OLS. Returns job metadata and later a reproducible receipt, not file bytes.",
 	get_job: "Inspect an export job's bounded progress metadata.",
 	cancel_job: "Request cancellation of a backend-owned export job.",
 	get_receipt: "Read the backend's export receipt; not a human provenance stamp.",

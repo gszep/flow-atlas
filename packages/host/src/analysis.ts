@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
+	AcquisitionNumericalError,
+	type AcquisitionPlan,
 	acquireDevice,
 	type CompensationDiagnostics,
 	CompensationNumericalError,
@@ -9,7 +11,13 @@ import {
 	compensateChunk,
 	KERNEL_SOURCES,
 	Kernels,
+	linearizeChunk,
+	prepareAcquisition,
 	prepareCompensation,
+	prepareSpectralUnmixing,
+	SpectralNumericalError,
+	type SpectralPlan,
+	unmixChunk,
 } from "@flow-atlas/compute";
 import { type FcsFile, openFcs, writeFcs } from "@flow-atlas/fcs";
 import { ArtifactStore, canonical, digest, fileSource, writeAll } from "./artifact-store.js";
@@ -19,6 +27,15 @@ import {
 	operationSchemas,
 	validateOperation,
 } from "./contracts.js";
+import {
+	type InputContext,
+	inputContext,
+	type ProcessingRequest,
+	parseTimeStep,
+	processingMetadata,
+	resolveContext,
+	type SpectralDefinition,
+} from "./processing.js";
 
 type Metadata = Omit<FcsFile, "data">;
 declare const __FLOW_ATLAS_BUILD_ID__: string;
@@ -38,10 +55,12 @@ interface Compensation {
 	channels: string[];
 	matrix: number[];
 	diagnostics: CompensationDiagnostics;
+	context: InputContext;
 }
-interface ExportRequest {
+interface ExportRequest extends ProcessingRequest {
 	sampleId: string;
 	compensationId?: string | undefined;
+	unmixingId?: string | undefined;
 	channels?: string[] | undefined;
 	renameChannels?: Record<string, string> | undefined;
 	keywords?: Record<string, string> | undefined;
@@ -60,6 +79,8 @@ interface Job {
 	completedAt?: string;
 	request: ExportRequest;
 	plannedCompensation?: Compensation;
+	plannedUnmixing?: SpectralDefinition;
+	inputContext: InputContext;
 	abort: AbortController;
 	error?: { code: string; message: string; details?: unknown };
 	result?: { path: string; sha256: string; bytes: number; receiptPath: string };
@@ -73,6 +94,19 @@ interface GpuContext {
 	description: string;
 	loss?: string;
 }
+interface ProcessingSelection {
+	context: InputContext;
+	metadata: Metadata;
+	compensation?: Compensation;
+	unmixing?: SpectralDefinition;
+}
+interface PreparedPipeline {
+	acquisition?: AcquisitionPlan;
+	compensation?: CompensationPlan;
+	spectral?: SpectralPlan;
+	apply(data: Float32Array): Promise<Float32Array>;
+	destroy(): void;
+}
 export interface AnalysisOptions {
 	root: string;
 	/** Maximum decoded chunk bytes. At most 64 MiB, allowing 64-bit input decoding within 128 MiB. */
@@ -82,7 +116,11 @@ export interface AnalysisOptions {
 function failure(error: unknown): { code: string; message: string; details?: unknown } {
 	if (error instanceof Error && error.name === "AbortError")
 		return { code: "CANCELLED", message: "Operation cancelled" };
-	if (error instanceof CompensationNumericalError)
+	if (
+		error instanceof CompensationNumericalError ||
+		error instanceof AcquisitionNumericalError ||
+		error instanceof SpectralNumericalError
+	)
 		return {
 			code: "NUMERICAL_REJECTION",
 			message: error.message,
@@ -110,7 +148,7 @@ function linear(channels: Metadata["channels"]): void {
 	if (invalid.length)
 		throw new AnalysisError(
 			"ACQUISITION_SCALE_UNSUPPORTED",
-			"This operation requires linear unit-gain channel values; acquisition scaling has not been implemented",
+			"Stored-space processing requires linear unit-gain channel values; explicitly select inputSpace=linearized for acquisition scaling",
 			{ channels: invalid.map((c) => c.name) },
 		);
 }
@@ -127,6 +165,7 @@ class FcsAnalysis implements AnalysisService {
 	private readonly samples = new Map<string, Sample>();
 	private readonly catalog = new Map<string, Record<string, unknown>>();
 	private readonly compensations = new Map<string, Compensation>();
+	private readonly unmixings = new Map<string, SpectralDefinition>();
 	private readonly jobs = new Map<string, Job>();
 	private readonly queue: Job[] = [];
 	private readonly active = new Set<Promise<unknown>>();
@@ -170,28 +209,45 @@ class FcsAnalysis implements AnalysisService {
 			case "list_capabilities":
 				operationSchemas.list_capabilities.parse(input);
 				return {
-					version: "flow-atlas-fcs-v1",
+					version: "flow-atlas-fcs-v2",
 					buildId,
 					inputFormats: ["FCS2.0", "FCS3.0", "FCS3.1"],
 					outputFormat: "FCS3.1-F32-LE",
 					decodedPrecision: "float32",
 					compute: "WebGPU; no CPU fallback",
 					compensation: "square conventional spillover; measured = true × spill",
+					acquisition: {
+						inputSpaces: ["stored", "linearized"],
+						explicitOnly: true,
+						profile: "stored-to-acquisition-linear-f32-v1",
+						gain: "divide ordinary channels by gain",
+						log: "log0 * 10^(decades * stored / range) / gain; positive decades with zero log0 normalize log0 to one",
+						time: "explicit exact parameter or unique case-insensitive Time; multiply by override/$TIMESTEP/default-one; ignore Time gain; nonlinear Time rejects",
+					},
+					spectral: {
+						algorithm: "column-pivoted-householder-qr-f32",
+						model: "measured = abundances × reference",
+						originalColumns: "preserved in the selected input space",
+						outputs: "appended fluorochromes and optional L2 residual",
+					},
 					limits: {
 						chunkBytes: this.chunkBytes,
 						maxCompensatedChannels: 128,
+						maxSpectralDetectors: 128,
+						maxSpectralFluorochromes: 128,
+						maxAcquisitionChannels: 4096,
 						maxActiveRequests: 16,
 						maxQueuedJobs: 16,
 						maxSamples: 4096,
 						maxCachedSamples: 32,
 						maxCompensations: 128,
+						maxUnmixingDefinitions: 128,
 						previewEvents: 100,
 						previewChannels: 32,
 					},
 					unsupported: [
-						"spectral OLS/WLS",
-						"logarithmic acquisition decoding",
-						"non-unit acquisition gain",
+						"weighted spectral WLS/WOLS and SpectralFX",
+						"nonlinear Time acquisition",
 						"lossless float64/integer export",
 						"multiple datasets",
 						"automatic compensation inference",
@@ -271,6 +327,7 @@ class FcsAnalysis implements AnalysisService {
 			case "register_compensation": {
 				const args = operationSchemas.register_compensation.parse(input);
 				const sample = await this.sample(args.sampleId, signal);
+				const context = inputContext(sample.metadata, args);
 				const spill = args.spillover ?? sample.metadata.spill;
 				if (!spill)
 					throw new AnalysisError(
@@ -303,7 +360,7 @@ class FcsAnalysis implements AnalysisService {
 						);
 					return matches[0] as Metadata["channels"][number];
 				});
-				linear(participating);
+				if (context.inputSpace === "stored") linear(participating);
 				const matrix = Array.from(spill.matrix),
 					channels = [...spill.channels];
 				const id = digest({
@@ -311,11 +368,13 @@ class FcsAnalysis implements AnalysisService {
 					channels,
 					matrix,
 					algorithm: "gpu-conventional-v1",
+					...(context.inputSpace === "linearized" ? { context } : {}),
 				});
 				const existing = this.compensations.get(id);
 				if (existing) return this.compensationSummary(existing);
 				if (this.compensations.size >= 128)
 					throw new AnalysisError("MATRIX_LIMIT", "Session compensation limit reached");
+				await this.validateAcquisition(sample, context, signal);
 				const diagnostics = await this.withGpu(async (gpu) => {
 					const plan = await prepareCompensation(
 						gpu.kernels,
@@ -330,24 +389,97 @@ class FcsAnalysis implements AnalysisService {
 					}
 				}, signal);
 				signal.throwIfAborted();
-				const record = { id, sampleId: sample.id, channels, matrix, diagnostics };
+				const record = { id, sampleId: sample.id, channels, matrix, diagnostics, context };
 				if (!this.compensations.has(id) && this.compensations.size >= 128)
 					throw new AnalysisError("MATRIX_LIMIT", "Session compensation limit reached");
 				this.compensations.set(id, record);
 				return this.compensationSummary(record);
 			}
+			case "register_unmixing": {
+				const args = operationSchemas.register_unmixing.parse(input);
+				const sample = await this.sample(args.sampleId, signal);
+				const context = inputContext(sample.metadata, args);
+				if (
+					args.fluorochromes.length > args.detectors.length ||
+					args.matrix.length !== args.fluorochromes.length * args.detectors.length
+				)
+					throw new AnalysisError(
+						"UNSUPPORTED_MATRIX_SHAPE",
+						"Spectral OLS requires a fluorochrome-by-detector matrix with at least as many detectors as outputs",
+					);
+				if (args.outputRanges && args.outputRanges.length !== args.fluorochromes.length)
+					throw new AnalysisError(
+						"INVALID_OUTPUT_METADATA",
+						"One nominal output range is required per fluorochrome",
+					);
+				if (args.residualRange !== undefined && args.residualChannel === undefined)
+					throw new AnalysisError(
+						"INVALID_OUTPUT_METADATA",
+						"Residual range requires a named residual output",
+					);
+				if (
+					[...args.fluorochromes, ...(args.residualChannel ? [args.residualChannel] : [])].some(
+						(name) => name.toLowerCase() === "time",
+					)
+				)
+					throw new AnalysisError(
+						"INVALID_OUTPUT_METADATA",
+						"Derived outputs must use names distinct from the Time acquisition axis",
+					);
+				const detectorIndices = this.indices(sample, args.detectors);
+				if (context.inputSpace === "stored")
+					linear(
+						detectorIndices.map((i) => sample.metadata.channels[i] as Metadata["channels"][number]),
+					);
+				const definition = {
+					sampleId: sample.id,
+					detectors: [...args.detectors],
+					fluorochromes: [...args.fluorochromes],
+					matrix: [...args.matrix],
+					...(args.residualChannel === undefined ? {} : { residualChannel: args.residualChannel }),
+					outputRanges: args.outputRanges ?? args.fluorochromes.map(() => 262144),
+					residualRange: args.residualRange ?? 262144,
+					context,
+				};
+				const id = digest({ ...definition, algorithm: "spectral-ols-qr-f32-v1" });
+				const existing = this.unmixings.get(id);
+				if (existing) return this.unmixingSummary(existing);
+				if (this.unmixings.size >= 128)
+					throw new AnalysisError("MATRIX_LIMIT", "Session unmixing-definition limit reached");
+				await this.validateAcquisition(sample, context, signal);
+				const diagnostics = await this.withGpu(async (gpu) => {
+					const plan = await prepareSpectralUnmixing(
+						gpu.kernels,
+						sample.metadata.channels.map((c) => c.name),
+						definition,
+						gpu.maxBinding,
+					);
+					try {
+						return structuredClone(plan.diagnostics);
+					} finally {
+						plan.destroy();
+					}
+				}, signal);
+				signal.throwIfAborted();
+				if (!this.unmixings.has(id) && this.unmixings.size >= 128)
+					throw new AnalysisError("MATRIX_LIMIT", "Session unmixing-definition limit reached");
+				const record: SpectralDefinition = { ...definition, id, diagnostics };
+				this.unmixings.set(id, record);
+				return this.unmixingSummary(record);
+			}
 			case "preview_fcs": {
 				const args = operationSchemas.preview_fcs.parse(input);
 				const sample = await this.sample(args.sampleId, signal);
-				const names = args.channels ?? sample.metadata.channels.slice(0, 16).map((c) => c.name);
-				const selected = this.indices(sample, names);
+				const processing = this.processing(sample, args);
+				const view = { ...sample, metadata: processing.metadata };
+				const names = args.channels ?? view.metadata.channels.slice(0, 16).map((c) => c.name);
+				const selected = this.indices(view, names);
 				const offset = args.offset ?? 0;
 				if (offset > sample.metadata.eventCount)
 					throw new AnalysisError("INVALID_RANGE", "Preview starts past the sample");
 				const count = Math.min(args.limit ?? 10, sample.metadata.eventCount - offset);
-				const comp = this.compensation(sample, args.compensationId);
 				const handle = await fileSource(sample.path, this.store.root);
-				let plan: CompensationPlan | undefined;
+				let pipeline: PreparedPipeline | undefined;
 				try {
 					if (handle.identity !== sample.identity)
 						throw new AnalysisError(
@@ -355,19 +487,22 @@ class FcsAnalysis implements AnalysisService {
 							"Input artifact changed since metadata was read; re-import a verified source",
 						);
 					const reader = await openFcs(handle.source, { signal });
-					if (comp) plan = await this.plan(sample, comp, signal);
+					pipeline = await this.pipeline(sample, processing, signal);
 					const rows: Array<Array<number | null>> = [];
 					for await (const chunk of reader.chunks({
 						startEvent: offset,
 						eventCount: count,
-						chunkEvents: Math.min(Math.max(1, count), this.chunkEvents(sample)),
+						chunkEvents: Math.min(
+							Math.max(1, count),
+							this.chunkEvents(sample, view.metadata.channels.length),
+						),
 						signal,
 					})) {
-						const values = plan ? await this.apply(plan, chunk.data, signal) : chunk.data;
+						const values = await this.processChunk(pipeline, chunk.data, chunk.start, chunk.count);
 						for (let row = 0; row < chunk.count; row++)
 							rows.push(
 								selected.map((i) => {
-									const v = values[row * sample.metadata.channels.length + i] as number;
+									const v = values[row * view.metadata.channels.length + i] as number;
 									return Number.isFinite(v) ? v : null;
 								}),
 							);
@@ -378,21 +513,29 @@ class FcsAnalysis implements AnalysisService {
 						offset,
 						channels: names,
 						rows,
-						compensationId: comp?.id ?? null,
+						compensationId: processing.compensation?.id ?? null,
+						unmixingId: processing.unmixing?.id ?? null,
+						inputContext: processing.context,
+						acquisition: this.acquisitionEvidence(pipeline.acquisition),
+						columnRoles: names.map((name) => this.columnRole(processing, name)),
 						sourceSpace:
-							"stored numeric values decoded to float32; no acquisition gain, logarithmic or time conversion",
+							processing.context.inputSpace === "stored"
+								? "stored numeric values decoded to float32; no acquisition gain, logarithmic or time conversion"
+								: "acquisition-linear numeric values; explicit gain/log/time preprocessing",
 						nonfiniteEncoding: "JSON null represents a nonfinite raw value",
 					};
 				} finally {
-					plan?.destroy();
+					pipeline?.destroy();
 					await handle.close();
 				}
 			}
 			case "start_fcs_export": {
 				const request = operationSchemas.start_fcs_export.parse(input);
 				const sample = await this.sample(request.sampleId, signal);
-				const plannedCompensation = this.compensation(sample, request.compensationId);
-				this.exportMetadata(sample, request);
+				const processing = this.processing(sample, request);
+				const plannedCompensation = processing.compensation,
+					plannedUnmixing = processing.unmixing;
+				this.exportMetadata(sample, request, processing);
 				if (this.queue.length + this.pendingJobs >= 16)
 					throw new AnalysisError("QUEUE_FULL", "Export queue is full");
 				this.pendingJobs++;
@@ -405,15 +548,18 @@ class FcsAnalysis implements AnalysisService {
 					createdAt: new Date().toISOString(),
 					enqueuedAt: performance.now(),
 					request: structuredClone(request),
+					inputContext: structuredClone(processing.context),
 					abort: new AbortController(),
 					...(plannedCompensation
 						? { plannedCompensation: structuredClone(plannedCompensation) }
 						: {}),
+					...(plannedUnmixing ? { plannedUnmixing: structuredClone(plannedUnmixing) } : {}),
 				};
 				try {
 					await this.store.saveRun(job.id, {
 						...this.jobRecord(job),
 						plannedCompensation: job.plannedCompensation,
+						plannedUnmixing: job.plannedUnmixing,
 					});
 					signal.throwIfAborted();
 					this.jobs.set(job.id, job);
@@ -432,7 +578,12 @@ class FcsAnalysis implements AnalysisService {
 				const job = this.jobs.get(args.jobId);
 				if (job) return this.jobRecord(job);
 				const record = await this.persistedRun(args.jobId);
-				const { receipt: _receipt, plannedCompensation: _planned, ...status } = record;
+				const {
+					receipt: _receipt,
+					plannedCompensation: _planned,
+					plannedUnmixing: _unmixing,
+					...status
+				} = record;
 				return {
 					...status,
 					live: false,
@@ -560,19 +711,230 @@ class FcsAnalysis implements AnalysisService {
 			channels: [...comp.channels],
 			matrixHash: digest(comp.matrix),
 			diagnostics: structuredClone(comp.diagnostics),
+			context: structuredClone(comp.context),
 		};
 	}
-	private chunkEvents(sample: Sample): number {
+	private unmixing(sample: Sample, id?: string): SpectralDefinition | undefined {
+		if (id === undefined) return undefined;
+		const definition = this.unmixings.get(id);
+		if (!definition || definition.sampleId !== sample.id)
+			throw new AnalysisError(
+				"INVALID_UNMIXING",
+				"Unmixing must be registered for this exact input sample",
+			);
+		return definition;
+	}
+	private unmixingSummary(definition: SpectralDefinition) {
+		return {
+			id: definition.id,
+			sampleId: definition.sampleId,
+			detectors: definition.detectors,
+			fluorochromes: definition.fluorochromes,
+			residualChannel: definition.residualChannel,
+			outputRanges: definition.outputRanges,
+			residualRange: definition.residualRange,
+			matrixHash: digest(definition.matrix),
+			context: definition.context,
+			diagnostics: definition.diagnostics,
+		};
+	}
+	private processing(sample: Sample, request: ExportRequest): ProcessingSelection {
+		if (request.compensationId !== undefined && request.unmixingId !== undefined)
+			throw new AnalysisError(
+				"CONFLICTING_PROCESSING",
+				"Choose conventional compensation or spectral OLS, not both",
+			);
+		const compensation = this.compensation(sample, request.compensationId);
+		const unmixing = this.unmixing(sample, request.unmixingId);
+		const context = resolveContext(
+			sample.metadata,
+			request,
+			compensation?.context ?? unmixing?.context,
+		);
+		return {
+			context,
+			metadata: processingMetadata(sample.metadata, context, unmixing),
+			...(compensation ? { compensation } : {}),
+			...(unmixing ? { unmixing } : {}),
+		};
+	}
+	private async acquisitionPlan(
+		sample: Sample,
+		context: InputContext,
+		signal: AbortSignal,
+	): Promise<AcquisitionPlan | undefined> {
+		if (context.inputSpace === "stored") return undefined;
+		return this.withGpu(
+			(gpu) =>
+				prepareAcquisition(
+					gpu.kernels,
+					sample.metadata.channels,
+					context.acquisition ?? {},
+					gpu.maxBinding,
+				),
+			signal,
+		);
+	}
+	private async validateAcquisition(
+		sample: Sample,
+		context: InputContext,
+		signal: AbortSignal,
+	): Promise<void> {
+		const plan = await this.acquisitionPlan(sample, context, signal);
+		plan?.destroy();
+	}
+	private async pipeline(
+		sample: Sample,
+		processing: ProcessingSelection,
+		signal: AbortSignal,
+	): Promise<PreparedPipeline> {
+		let acquisition: AcquisitionPlan | undefined,
+			compensation: CompensationPlan | undefined,
+			spectral: SpectralPlan | undefined;
+		const destroy = () => {
+			acquisition?.destroy();
+			compensation?.destroy();
+			spectral?.destroy();
+		};
+		const stage = async (name: string, action: () => Promise<Float32Array>) => {
+			try {
+				return await action();
+			} catch (error) {
+				if (
+					error instanceof AcquisitionNumericalError ||
+					error instanceof CompensationNumericalError ||
+					error instanceof SpectralNumericalError
+				) {
+					const detail = failure(error);
+					throw new AnalysisError(detail.code, detail.message, {
+						...(detail.details as Record<string, unknown>),
+						stage: name,
+					});
+				}
+				throw error;
+			}
+		};
+		try {
+			acquisition = await this.acquisitionPlan(sample, processing.context, signal);
+			if (processing.compensation)
+				compensation = await this.plan(sample, processing.compensation, signal);
+			if (processing.unmixing)
+				spectral = await this.withGpu(
+					(gpu) =>
+						prepareSpectralUnmixing(
+							gpu.kernels,
+							sample.metadata.channels.map((c) => c.name),
+							processing.unmixing as SpectralDefinition,
+							gpu.maxBinding,
+						),
+					signal,
+				);
+			if (
+				spectral &&
+				canonical(spectral.outputChannelNames) !==
+					canonical(processing.metadata.channels.map((channel) => channel.name))
+			)
+				throw new AnalysisError(
+					"OUTPUT_LAYOUT_MISMATCH",
+					"Spectral plan and export channel metadata disagree",
+				);
+			return {
+				...(acquisition ? { acquisition } : {}),
+				...(compensation ? { compensation } : {}),
+				...(spectral ? { spectral } : {}),
+				destroy,
+				apply: async (data) => {
+					let result = data;
+					if (acquisition)
+						result = await stage("acquisition", () =>
+							this.withGpu(
+								(gpu) =>
+									linearizeChunk(
+										gpu.kernels,
+										acquisition as AcquisitionPlan,
+										result,
+										gpu.maxBinding,
+									),
+								signal,
+							),
+						);
+					if (compensation)
+						result = await stage("compensation", () =>
+							this.apply(compensation as CompensationPlan, result, signal),
+						);
+					if (spectral)
+						result = await stage("spectral-ols", () =>
+							this.withGpu(
+								(gpu) => unmixChunk(gpu.kernels, spectral as SpectralPlan, result, gpu.maxBinding),
+								signal,
+							),
+						);
+					return result;
+				},
+			};
+		} catch (error) {
+			destroy();
+			throw error;
+		}
+	}
+	private acquisitionEvidence(plan?: AcquisitionPlan) {
+		if (!plan) return null;
+		const { channels, ...metadata } = plan.metadata;
+		return {
+			...metadata,
+			channelCount: channels.length,
+			parameterHash: digest(plan.metadata),
+			changedChannelCount: channels.filter((channel) => channel.operation !== "identity").length,
+			log0NormalizedChannelCount: channels.filter((channel) => channel.log0Normalized).length,
+			timeGainPolicy: plan.timeChannel === null ? "not-applicable" : "ignored",
+		};
+	}
+	private async processChunk(
+		pipeline: PreparedPipeline,
+		data: Float32Array,
+		sourceStartEvent: number,
+		sourceEventCount: number,
+	): Promise<Float32Array> {
+		try {
+			return await pipeline.apply(data);
+		} catch (error) {
+			if (error instanceof AnalysisError && error.code === "NUMERICAL_REJECTION")
+				throw new AnalysisError(error.code, error.message, {
+					...(error.details as Record<string, unknown>),
+					sourceChunkStartEvent: sourceStartEvent,
+					sourceChunkEventCount: sourceEventCount,
+				});
+			throw error;
+		}
+	}
+	private columnRole(processing: ProcessingSelection, name: string): string {
+		return processing.unmixing?.fluorochromes.includes(name)
+			? "unmixed"
+			: processing.unmixing?.residualChannel === name
+				? "residual-l2"
+				: processing.compensation?.channels.includes(name)
+					? "compensated"
+					: processing.context.inputSpace;
+	}
+	private chunkEvents(
+		sample: Sample,
+		outputChannelCount = sample.metadata.channels.length,
+	): number {
 		const decoded = sample.metadata.channels.length * 4;
+		const largestStride = Math.max(decoded, outputChannelCount * 4);
 		const encoded = sample.metadata.channels.reduce((sum, channel) => sum + channel.bits / 8, 0);
 		const count = Math.floor(
-			Math.min(this.chunkBytes / decoded, (128 * 2 ** 20) / (decoded + encoded)),
+			Math.min(this.chunkBytes / largestStride, (128 * 2 ** 20) / (decoded + encoded)),
 		);
 		if (count < 1)
 			throw new AnalysisError("ROW_TOO_LARGE", "One event exceeds the configured chunk budget");
 		return count;
 	}
-	private exportMetadata(sample: Sample, request: ExportRequest): Metadata {
+	private exportMetadata(
+		sample: Sample,
+		request: ExportRequest,
+		processing = this.processing(sample, request),
+	): Metadata {
 		const start = request.startEvent ?? 0,
 			count = request.eventCount ?? sample.metadata.eventCount - start;
 		if (
@@ -591,8 +953,9 @@ class FcsAnalysis implements AnalysisService {
 				Buffer.byteLength(request.outputName) > 240)
 		)
 			throw new AnalysisError("INVALID_OUTPUT_NAME", "Output name must be a simple .fcs filename");
-		const names = request.channels ?? sample.metadata.channels.map((c) => c.name);
-		const selected = this.indices(sample, names);
+		const view = { ...sample, metadata: processing.metadata };
+		const names = request.channels ?? view.metadata.channels.map((c) => c.name);
+		const selected = this.indices(view, names);
 		if (Object.keys(request.renameChannels ?? {}).some((name) => !names.includes(name)))
 			throw new AnalysisError("INVALID_CHANNEL", "Rename keys must refer to selected channels");
 		const renamed = (name: string): string =>
@@ -600,7 +963,25 @@ class FcsAnalysis implements AnalysisService {
 				? (request.renameChannels[name] as string)
 				: name;
 		const channels = selected.map((i) => {
-			const c = sample.metadata.channels[i] as Metadata["channels"][number];
+			const c = view.metadata.channels[i] as Metadata["channels"][number];
+			if (i >= sample.metadata.channels.length && renamed(c.name).toLowerCase() === "time")
+				throw new AnalysisError(
+					"INVALID_OUTPUT_METADATA",
+					"Derived outputs must not be renamed to the Time acquisition axis",
+				);
+			if (
+				processing.context.inputSpace === "stored" &&
+				(c.name.toLowerCase() === "time") !== (renamed(c.name).toLowerCase() === "time") &&
+				["$TIMESTEP", "TIMESTEP"].some(
+					(key) =>
+						sample.metadata.keywords[key] !== undefined &&
+						parseTimeStep(sample.metadata.keywords[key] as string) !== 1,
+				)
+			)
+				throw new AnalysisError(
+					"INVALID_OUTPUT_METADATA",
+					"Linearize time values before changing a Time axis identity with non-unit TIMESTEP",
+				);
 			return { ...c, name: renamed(c.name) };
 		});
 		if (
@@ -619,7 +1000,9 @@ class FcsAnalysis implements AnalysisService {
 				/^\$(?:BEGIN|END|BYTEORD|DATATYPE|MODE$|NEXTDATA|PAR$|TOT$|FIL$|P\d)|^\$?SPILL(?:OVER)?$/i.test(
 					key,
 				) ||
-				/^FLOWATLAS_/i.test(key)
+				/^FLOWATLAS_/i.test(key) ||
+				(processing.context.inputSpace === "linearized" &&
+					["$TIMESTEP", "TIMESTEP"].includes(key.toUpperCase()))
 			)
 				throw new AnalysisError(
 					"MANAGED_KEYWORD",
@@ -627,18 +1010,41 @@ class FcsAnalysis implements AnalysisService {
 				);
 		}
 		const keywords = {
-			...sample.metadata.keywords,
+			...view.metadata.keywords,
 			...Object.fromEntries(
 				Object.entries(request.keywords ?? {}).map(([k, v]) => [k.toUpperCase(), v]),
 			),
 		};
+		const timeEdits = Object.entries(request.keywords ?? {}).filter(([key]) =>
+			["$TIMESTEP", "TIMESTEP"].includes(key.toUpperCase()),
+		);
+		if (timeEdits.length) {
+			const steps = timeEdits.map(([, value]) => parseTimeStep(value));
+			if (steps.some((value) => !Number.isFinite(value) || value <= 0 || value !== steps[0]))
+				throw new AnalysisError(
+					"INVALID_OUTPUT_METADATA",
+					"TIMESTEP edits must specify one consistent positive number",
+				);
+			delete keywords.TIMESTEP;
+			keywords.$TIMESTEP = String(steps[0]);
+		}
 		keywords.$FIL = request.outputName ?? `${sample.id.slice(0, 12)}.analysis.fcs`;
 		keywords.FLOWATLAS_SOURCE_SHA256 = sample.id;
 		const output: Metadata = { version: "FCS3.1", channels, keywords, eventCount: count };
-		const comp = this.compensation(sample, request.compensationId);
+		const comp = processing.compensation;
 		if (comp) {
 			keywords.FLOWATLAS_COMPENSATION_ID = comp.id;
 			keywords.FLOWATLAS_COMPENSATED = "true";
+		} else if (processing.unmixing) {
+			keywords.FLOWATLAS_UNMIXING_ID = processing.unmixing.id;
+			const originals = selected.some((index) => index < sample.metadata.channels.length);
+			const derived = selected.some((index) => index >= sample.metadata.channels.length);
+			keywords.FLOWATLAS_OUTPUT_LAYOUT =
+				originals && derived
+					? "original-plus-derived"
+					: originals
+						? "original-only"
+						: "derived-only";
 		} else if (sample.metadata.spill) {
 			const spill = sample.metadata.spill;
 			const kept = spill.channels.filter((name) => names.includes(name));
@@ -730,6 +1136,7 @@ class FcsAnalysis implements AnalysisService {
 			createdAt: job.createdAt,
 			completedAt: job.completedAt,
 			request: job.request,
+			inputContext: job.inputContext,
 			error: job.error,
 			warnings: job.warnings,
 			result: job.state === "succeeded" ? job.result : undefined,
@@ -753,6 +1160,7 @@ class FcsAnalysis implements AnalysisService {
 				phase: "complete",
 				result: value.output,
 				request: value.recipe,
+				inputContext: value.inputContext,
 				processedEvents: value.eventCount,
 				totalEvents: value.eventCount,
 				receipt,
@@ -792,7 +1200,7 @@ class FcsAnalysis implements AnalysisService {
 	private async executeJob(job: Job): Promise<void> {
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id);
-		let plan: CompensationPlan | undefined;
+		let pipeline: PreparedPipeline | undefined;
 		let source: Awaited<ReturnType<typeof fileSource>> | undefined;
 		let output: Awaited<ReturnType<typeof open>> | undefined;
 		const started = performance.now();
@@ -805,20 +1213,28 @@ class FcsAnalysis implements AnalysisService {
 			await this.store.saveRun(job.id, {
 				...this.jobRecord(job),
 				plannedCompensation: job.plannedCompensation,
+				plannedUnmixing: job.plannedUnmixing,
 			});
 			const sample = await this.sample(job.request.sampleId, signal);
 			source = await fileSource(sample.path, this.store.root);
 			await source.verify(sample.id, signal);
-			const comp = this.compensation(sample, job.request.compensationId);
-			const metadata = this.exportMetadata(sample, job.request);
-			const names = job.request.channels ?? sample.metadata.channels.map((c) => c.name);
-			const indices = this.indices(sample, names),
-				par = sample.metadata.channels.length;
-			const chunkEvents = this.chunkEvents(sample);
-			if (comp) {
-				job.phase = "preparing-compensation";
-				plan = await this.plan(sample, comp, signal);
-			}
+			const processing = this.processing(sample, job.request);
+			if (canonical(processing.context) !== canonical(job.inputContext))
+				throw new AnalysisError(
+					"PROCESSING_CONTEXT_MISMATCH",
+					"Input processing context changed after job submission",
+				);
+			const comp = processing.compensation,
+				unmixing = processing.unmixing;
+			const metadata = this.exportMetadata(sample, job.request, processing);
+			const view = { ...sample, metadata: processing.metadata };
+			const names = job.request.channels ?? view.metadata.channels.map((c) => c.name);
+			const indices = this.indices(view, names),
+				par = view.metadata.channels.length;
+			const chunkEvents = this.chunkEvents(sample, par);
+			job.phase = "preparing-processing";
+			const prepared = await this.pipeline(sample, processing, signal);
+			pipeline = prepared;
 			const reader = await openFcs(source.source, { signal });
 			const setupMs = performance.now() - started;
 			await mkdir(staging, { mode: 0o700 });
@@ -835,8 +1251,14 @@ class FcsAnalysis implements AnalysisService {
 					signal,
 				})) {
 					signal.throwIfAborted();
-					job.phase = comp ? "compensating" : "writing";
-					const data = plan ? await self.apply(plan, chunk.data, signal) : chunk.data;
+					job.phase = unmixing
+						? "unmixing"
+						: comp
+							? "compensating"
+							: processing.context.inputSpace === "linearized"
+								? "linearizing"
+								: "writing";
+					const data = await self.processChunk(prepared, chunk.data, chunk.start, chunk.count);
 					if (indices.length === par && indices.every((v, i) => v === i)) yield data;
 					else {
 						const selected = new Float32Array(chunk.count * indices.length);
@@ -883,17 +1305,38 @@ class FcsAnalysis implements AnalysisService {
 				output: job.result,
 				eventCount: metadata.eventCount,
 				channels: metadata.channels.map((channel) => channel.name),
+				columnRoles: names.map((name) => this.columnRole(processing, name)),
 				recipe: job.request,
+				inputContext: processing.context,
+				acquisition: this.acquisitionEvidence(pipeline.acquisition),
 				compensation: comp
 					? {
 							algorithm: "gpu-conventional-v1",
 							channels: comp.channels,
 							matrix: comp.matrix,
-							diagnostics: plan?.diagnostics,
+							diagnostics: pipeline.compensation?.diagnostics,
+							context: comp.context,
 							shaderHash: digest(KERNEL_SOURCES),
 							adapter: (await this.gpuPromise)?.description,
 						}
 					: null,
+				unmixing: unmixing
+					? {
+							algorithm: "spectral-ols-qr-f32-v1",
+							detectors: unmixing.detectors,
+							fluorochromes: unmixing.fluorochromes,
+							matrix: unmixing.matrix,
+							residualChannel: unmixing.residualChannel ?? null,
+							outputRanges: unmixing.outputRanges,
+							residualRange: unmixing.residualRange,
+							context: unmixing.context,
+							diagnostics: pipeline.spectral?.diagnostics,
+						}
+					: null,
+				gpu:
+					pipeline.acquisition || pipeline.compensation || pipeline.spectral
+						? { shaderHash: digest(KERNEL_SOURCES), adapter: (await this.gpuPromise)?.description }
+						: null,
 				outputFormat: "FCS3.1-F32-LE",
 				sourceDatatype: sample.metadata.keywords.$DATATYPE,
 				decodedPrecision: "float32",
@@ -933,13 +1376,16 @@ class FcsAnalysis implements AnalysisService {
 				hostInstanceId: this.instanceId,
 				buildId,
 				compensation: job.plannedCompensation ?? null,
+				unmixing: job.plannedUnmixing ?? null,
+				inputContext: job.inputContext,
+				acquisition: this.acquisitionEvidence(pipeline?.acquisition),
 				error: job.error,
 				processedEvents: job.processedEvents,
 				elapsedMs: performance.now() - started,
 			};
 		} finally {
 			const cleanup = [
-				() => plan?.destroy(),
+				() => pipeline?.destroy(),
 				() => output?.close(),
 				() => source?.close(),
 				() => rm(staging, { recursive: true, force: true }),

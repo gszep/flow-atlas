@@ -1,0 +1,3 @@
+numpy==2.5.4
+FlowIO==1.4.0
+FlowUtils==1.2.2

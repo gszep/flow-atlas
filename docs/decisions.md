@@ -687,3 +687,45 @@ including 13 spectral tests. Lint 1.005 s, incremental declaration/typecheck
 1.002 s, full test command 24.661 s; total 25.667 s, queue <0.001 s. Vitest reports
 0 s setup, 0.686 s transform, 1.74 s import and 17.44 s assertions. It reuses the
 same built workspace declarations and the same bounded scheduler policy.
+## 2026-10-17 — Explicit input spaces and named OLS in the agent API
+
+**Decision:** `register_unmixing` adds named detector/fluorochrome OLS, and preview,
+matrix registration and export accept opt-in `inputSpace: linearized`. Stored
+remains the default for unbound calls. Registered matrices bind their input space
+and effective acquisition settings; using a conflicting request context rejects.
+Stored-space conventional definition IDs retain their previous hash structure.
+Conventional compensation and spectral OLS cannot silently stack in one request.
+
+The processing order is stored F32 decode → optional acquisition scaling → one
+registered matrix operation → explicit channel selection/rename → FCS serialization.
+Original spectral input columns remain in that selected input space; named
+fluorochromes and optional Euclidean L2 residual are appended. Row windows use the
+larger input/output stride. The current host exchanges bounded arrays between
+stages; GPU-resident fusion is a follow-up, not an asserted property.
+
+Linearized exports reset gains/amplification and canonical timestep metadata to
+avoid reapplying conversion downstream. Legacy TIMESTEP aliases are reconciled;
+conflicts require an explicit override, and output aliases cannot override managed
+linearized time metadata. Time edits require positive decimal values. Derived
+outputs cannot impersonate Time, and changing an unlinearized Time identity with
+non-unit timestep rejects. Nominal output ranges are metadata, not clipping limits
+or measured extrema. Receipt channel roles track selected/renamed output columns.
+
+Receipts include bound context, actual acquisition profile/effective metadata hash,
+matrix setup diagnostics, and source chunk coordinates on numerical rejection.
+Failures clean staged outputs. No event arrays enter the workspace document and
+no human provenance stamp is synthesized.
+
+**Measured independent references:** a single-thread isolated Python environment
+used NumPy 2.5.4, FlowIO 1.4.0 and FlowUtils 1.2.2. Eleven spectral records compare
+F32-quantized inputs with float64 SVD/LAPACK least squares; seven acquisition records
+capture actual synthetic FlowIO reads. Private/source pins were verified byte-identical.
+Portable numeric records and an optional independent checker are committed under
+`packages/compute/test/data`; standard CI does not require Python. The checker
+reproduced all records and original synthetic FCS hashes. No vendor parity follows.
+
+Separate reviews found no demonstrated kernel regressions. Accepted spectral
+oracle cases had maximum observed abundance/residual errors about 1.40e-6/1.07e-6;
+diagnostic matrices rejected. Accepted acquisition cases had maximum normalized
+error 1.23e-7 against FlowIO, and nonlinear Time rejected. These are fixture-specific
+Metal measurements, not universal f32 error bounds or spectral/WOLS equivalence.

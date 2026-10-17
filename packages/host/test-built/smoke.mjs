@@ -118,10 +118,50 @@ try {
 	assert.equal(output.eventCount, 2);
 	const expected = [10, -2, 0, 20];
 	assert.ok(output.data.every((value, i) => Math.abs(value - expected[i]) < 0.0001));
+	const spectral = await call("register_unmixing", {
+		sampleId: sample.sampleId,
+		inputSpace: "linearized",
+		detectors: ["A", "B"],
+		fluorochromes: ["X"],
+		matrix: [1, 2],
+		residualChannel: "fit",
+	});
+	const spectralJob = await call("start_fcs_export", {
+		sampleId: sample.sampleId,
+		unmixingId: spectral.id,
+		channels: ["X", "fit"],
+	});
+	const spectralDeadline = Date.now() + 20_000;
+	let spectralStatus;
+	do {
+		spectralStatus = await call("get_job", { jobId: spectralJob.jobId });
+		if (["succeeded", "failed", "cancelled"].includes(spectralStatus.state)) break;
+		if (Date.now() > spectralDeadline) throw new Error("Spectral export did not finish");
+		await delay(10);
+	} while (spectralStatus.state === "queued" || spectralStatus.state === "running");
+	assert.equal(spectralStatus.state, "succeeded", JSON.stringify(spectralStatus));
+	const spectralBytes = await readFile(join(root, spectralStatus.result.path));
+	const spectralOutput = readFcs(
+		spectralBytes.buffer.slice(
+			spectralBytes.byteOffset,
+			spectralBytes.byteOffset + spectralBytes.byteLength,
+		),
+	);
+	assert.deepEqual(
+		spectralOutput.channels.map((channel) => channel.name),
+		["X", "fit"],
+	);
+	assert.equal(spectralOutput.keywords.FLOWATLAS_OUTPUT_LAYOUT, "derived-only");
+	assert.equal(spectralOutput.spill, undefined);
+	assert.ok(Math.abs(spectralOutput.data[0] - 1.96) < 1e-4);
+	assert.ok(Math.abs(spectralOutput.data[2] - 8.4) < 1e-4);
+	const spectralReceipt = await call("get_receipt", { jobId: spectralJob.jobId });
+	assert.equal(spectralReceipt.inputContext.inputSpace, "linearized");
+	assert.equal(spectralReceipt.unmixing.diagnostics.rank, 1);
 	console.log(
 		JSON.stringify({
 			result: "passed",
-			check: "built Node studio: import → GPU compensation → streamed export",
+			check: "built Node studio: conventional compensation and acquisition/spectral OLS exports",
 			inputHash: sample.sha256,
 			outputHash: status.result.sha256,
 		}),

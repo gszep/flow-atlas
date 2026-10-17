@@ -1,0 +1,238 @@
+{
+	"schema_version": 1,
+	"reader": "FlowIO FlowData.as_array(preprocess=False/True)",
+	"scope": "Synthetic integer FCS only. No gain<=0 inheritance requirement. No real event data.",
+	"cases": [
+		{
+			"id": "standard_linear_gain",
+			"classification": "standard",
+			"proposed_profile_policy": "accept",
+			"channels": [
+				{
+					"name": "A",
+					"gain": 2
+				},
+				{
+					"name": "B",
+					"gain": 0.5
+				}
+			],
+			"timestep": null,
+			"stored": [[0.0, 2.0], [100.0, 10.0], [1023.0, 512.0]],
+			"flowio_preprocessed": [[0.0, 4.0], [50.0, 20.0], [511.5, 1024.0]],
+			"independent_expected": [[0, 4], [50, 20], [511.5, 1024]],
+			"parsed_channel_metadata": {
+				"1": {
+					"pnn": "A",
+					"pns": "",
+					"pne": [0.0, 0.0],
+					"png": 2.0,
+					"pnr": 1024.0
+				},
+				"2": {
+					"pnn": "B",
+					"pns": "",
+					"pne": [0.0, 0.0],
+					"png": 0.5,
+					"pnr": 1024.0
+				}
+			},
+			"fcs_file": "standard_linear_gain.fcs",
+			"sha256": "f90ce2de58313585be98c2adc420fdac41450e43caa0fb97f37099e118e36426",
+			"max_abs_error": 0.0
+		},
+		{
+			"id": "standard_log_pne_pnr",
+			"classification": "standard",
+			"proposed_profile_policy": "accept",
+			"channels": [
+				{
+					"name": "Log",
+					"pne": "4,2",
+					"range": 1024
+				}
+			],
+			"timestep": null,
+			"stored": [[0.0], [256.0], [512.0], [768.0]],
+			"flowio_preprocessed": [[2.0], [20.0], [200.0], [2000.0]],
+			"independent_expected": [[2], [20], [200], [2000]],
+			"parsed_channel_metadata": {
+				"1": {
+					"pnn": "Log",
+					"pns": "",
+					"pne": [4.0, 2.0],
+					"png": 1.0,
+					"pnr": 1024.0
+				}
+			},
+			"fcs_file": "standard_log_pne_pnr.fcs",
+			"sha256": "3df41858ce544b7149eeda70db87c0e97bc63a203de962c3f5dba3924fa5f0a1",
+			"max_abs_error": 0.0
+		},
+		{
+			"id": "standard_time_timestep",
+			"classification": "standard",
+			"proposed_profile_policy": "accept",
+			"channels": [
+				{
+					"name": "Time"
+				},
+				{
+					"name": "A",
+					"gain": 4
+				}
+			],
+			"timestep": ".01",
+			"stored": [[0.0, 8.0], [20.0, 100.0], [100.0, 400.0]],
+			"flowio_preprocessed": [[0.0, 2.0], [0.2, 25.0], [1.0, 100.0]],
+			"independent_expected": [[0, 2], [0.2, 25], [1, 100]],
+			"parsed_channel_metadata": {
+				"1": {
+					"pnn": "Time",
+					"pns": "",
+					"pne": [0.0, 0.0],
+					"png": 1.0,
+					"pnr": 1024.0
+				},
+				"2": {
+					"pnn": "A",
+					"pns": "",
+					"pne": [0.0, 0.0],
+					"png": 4.0,
+					"pnr": 1024.0
+				}
+			},
+			"fcs_file": "standard_time_timestep.fcs",
+			"sha256": "7bf713f6f79e33aa3ad716345dbc78c3829f6af883d0575fe2b3a2057eb3e8af",
+			"max_abs_error": 0.0
+		},
+		{
+			"id": "compat_log_zero_normalization",
+			"classification": "invalid metadata normalized by FlowIO (source cites FCS rule)",
+			"proposed_profile_policy": "accept",
+			"channels": [
+				{
+					"name": "Log",
+					"pne": "4,0"
+				}
+			],
+			"timestep": null,
+			"stored": [[0.0], [256.0], [512.0]],
+			"flowio_preprocessed": [[1.0], [10.0], [100.0]],
+			"independent_expected": [[1], [10], [100]],
+			"parsed_channel_metadata": {
+				"1": {
+					"pnn": "Log",
+					"pns": "",
+					"pne": [4.0, 1.0],
+					"png": 1.0,
+					"pnr": 1024.0
+				}
+			},
+			"fcs_file": "compat_log_zero_normalization.fcs",
+			"sha256": "c3173a91f76991f655fbf152f9797494614a24bd4e5b91003599c63dff571821",
+			"max_abs_error": 0.0
+		},
+		{
+			"id": "vendor_time_gain_ignored",
+			"classification": "vendor compatibility behavior",
+			"proposed_profile_policy": "accept",
+			"channels": [
+				{
+					"name": "Time",
+					"gain": 100
+				},
+				{
+					"name": "A",
+					"gain": 2
+				}
+			],
+			"timestep": ".01",
+			"stored": [[20.0, 100.0], [100.0, 400.0]],
+			"flowio_preprocessed": [[0.2, 50.0], [1.0, 200.0]],
+			"independent_expected": [[0.2, 50], [1, 200]],
+			"parsed_channel_metadata": {
+				"1": {
+					"pnn": "Time",
+					"pns": "",
+					"pne": [0.0, 0.0],
+					"png": 1.0,
+					"pnr": 1024.0
+				},
+				"2": {
+					"pnn": "A",
+					"pns": "",
+					"pne": [0.0, 0.0],
+					"png": 2.0,
+					"pnr": 1024.0
+				}
+			},
+			"fcs_file": "vendor_time_gain_ignored.fcs",
+			"sha256": "bb3bd49dfcc83a39d0f82c158523d1710efb8d90e24cace5d384aa7587f0c314",
+			"max_abs_error": 0.0
+		},
+		{
+			"id": "vendor_log_plus_gain",
+			"classification": "nonstandard log-plus-gain compatibility behavior",
+			"proposed_profile_policy": "accept",
+			"channels": [
+				{
+					"name": "Log",
+					"pne": "4,2",
+					"gain": 2
+				}
+			],
+			"timestep": null,
+			"stored": [[0.0], [256.0], [512.0]],
+			"flowio_preprocessed": [[1.0], [10.0], [100.0]],
+			"independent_expected": [[1], [10], [100]],
+			"parsed_channel_metadata": {
+				"1": {
+					"pnn": "Log",
+					"pns": "",
+					"pne": [4.0, 2.0],
+					"png": 2.0,
+					"pnr": 1024.0
+				}
+			},
+			"fcs_file": "vendor_log_plus_gain.fcs",
+			"sha256": "4c30b9db43758799e7ada750ac9c6a88b798743ed34727daf5d3a909bcf18c02",
+			"max_abs_error": 0.0
+		},
+		{
+			"id": "unsupported_nonlinear_time",
+			"classification": "rejected profile edge; FlowIO scales time before anti-log",
+			"proposed_profile_policy": "reject nonlinear selected Time",
+			"channels": [
+				{
+					"name": "Time",
+					"pne": "4,1"
+				}
+			],
+			"timestep": ".01",
+			"stored": [[0.0], [256.0]],
+			"flowio_preprocessed": [[1.0], [1.023292992280754]],
+			"independent_expected": [[1], [1.023292992280754]],
+			"parsed_channel_metadata": {
+				"1": {
+					"pnn": "Time",
+					"pns": "",
+					"pne": [4.0, 1.0],
+					"png": 1.0,
+					"pnr": 1024.0
+				}
+			},
+			"fcs_file": "unsupported_nonlinear_time.fcs",
+			"sha256": "1d1c39d4e66e368258af302a0a4059e298e9b3d4e3bb7b9c175441838c952efa",
+			"max_abs_error": 0.0
+		}
+	],
+	"provenance": {
+		"generated": "2026-10-17",
+		"numpy": "2.5.4",
+		"flowio": "1.4.0",
+		"flowutils": "1.2.2",
+		"source_record_sha256": "e83aa4d613d96686ee6fa3986803aa036ef551b46e5dc869fe31fd81f345c33b",
+		"scope": "Synthetic independent CPU-reference data only; no runtime Python dependency or vendor parity claim."
+	}
+}
