@@ -23,6 +23,12 @@ import {
 import { type FcsFile, openFcs, writeFcs } from "@flow-atlas/fcs";
 import { ArtifactStore, canonical, digest, fileSource, writeAll } from "./artifact-store.js";
 import {
+	type BatchCountResult,
+	type ResolvedBatchCounts,
+	resolveBatchCounts,
+	runBatchCounts,
+} from "./batch-counts.js";
+import {
 	AnalysisError,
 	type AnalysisService,
 	boundedJson,
@@ -36,7 +42,12 @@ import {
 	resolveControls,
 	runControlEstimation,
 } from "./control-estimation.js";
-import { type ResolvedGateCounts, resolveGateCounts, runGateCounts } from "./gate-counts.js";
+import {
+	type GateCountResult,
+	type ResolvedGateCounts,
+	resolveGateCounts,
+	runGateCounts,
+} from "./gate-counts.js";
 import {
 	type InputContext,
 	inputContext,
@@ -80,7 +91,7 @@ interface ExportRequest extends ProcessingRequest {
 	outputName?: string | undefined;
 }
 interface Job {
-	kind?: "fcs-export" | "control-estimation" | "gate-counts";
+	kind?: "fcs-export" | "control-estimation" | "gate-counts" | "batch-gate-counts";
 	id: string;
 	state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
 	phase: string;
@@ -95,9 +106,12 @@ interface Job {
 	inputContext: InputContext;
 	estimation?: ResolvedControls;
 	gateCounts?: ResolvedGateCounts;
+	batchCounts?: ResolvedBatchCounts;
 	controlEvidence?: PopulationResult[];
 	controlCandidate?: Pick<ControlResult, "channels" | "matrix" | "estimationDiagnostics">;
-	progressDetail?: { populationId: string; pass: number };
+	progressDetail?:
+		| { populationId: string; pass: number }
+		| { sampleIndex: number; sampleId: string; sampleProcessedEvents: number };
 	abort: AbortController;
 	error?: { code: string; message: string; details?: unknown };
 	result?: {
@@ -263,6 +277,8 @@ class FcsAnalysis implements AnalysisService {
 						outputs: "appended fluorochromes and optional L2 residual",
 					},
 					limits: {
+						maxBatchCountSamples: 32,
+						maxBatchCountRows: 512,
 						maxGateVertices: 256,
 						maxCountGates: 128,
 						maxControlDetectors: 32,
@@ -574,6 +590,44 @@ class FcsAnalysis implements AnalysisService {
 					await handle.close();
 				}
 			}
+			case "start_batch_gate_counts": {
+				const request = operationSchemas.start_batch_gate_counts.parse(input);
+				const resolved = await resolveBatchCounts(request, (id) => this.sample(id, signal), signal);
+				signal.throwIfAborted();
+				if (this.queue.length + this.pendingJobs >= 16)
+					throw new AnalysisError("QUEUE_FULL", "Analysis queue is full");
+				this.pendingJobs++;
+				const job: Job = {
+					kind: "batch-gate-counts",
+					id: randomUUID(),
+					state: "queued",
+					phase: "queued",
+					processedEvents: 0,
+					totalEvents: resolved.totalEvents,
+					createdAt: new Date().toISOString(),
+					enqueuedAt: performance.now(),
+					request: { sampleId: request.samples[0]?.sampleId as string },
+					inputContext: { inputSpace: "stored" },
+					batchCounts: resolved,
+					abort: new AbortController(),
+				};
+				try {
+					await this.store.saveRun(job.id, {
+						...this.jobRecord(job),
+						batchCounts: this.batchRecord(resolved),
+					});
+					signal.throwIfAborted();
+					this.jobs.set(job.id, job);
+					this.queue.push(job);
+					queueMicrotask(() => this.pump());
+					return this.jobRecord(job);
+				} catch (error) {
+					await rm(join(this.store.runs, `${job.id}.json`), { force: true });
+					throw error;
+				} finally {
+					this.pendingJobs--;
+				}
+			}
 			case "start_gate_counts": {
 				const request = operationSchemas.start_gate_counts.parse(input);
 				const sample = await this.sample(request.sampleId, signal);
@@ -701,6 +755,7 @@ class FcsAnalysis implements AnalysisService {
 					plannedUnmixing: _unmixing,
 					estimation: _estimation,
 					gateCounts: _gateCounts,
+					batchCounts: _batchCounts,
 					...status
 				} = record;
 				return {
@@ -1214,7 +1269,8 @@ class FcsAnalysis implements AnalysisService {
 			try {
 				return await fn(gpu);
 			} catch (error) {
-				if (gpu.loss !== undefined) throw new AnalysisError("DEVICE_LOST", gpu.loss);
+				if (gpu.loss !== undefined)
+					throw new AnalysisError("DEVICE_LOST", gpu.loss, { cause: failure(error) });
 				throw error;
 			}
 		} finally {
@@ -1244,6 +1300,20 @@ class FcsAnalysis implements AnalysisService {
 			signal,
 		);
 	}
+	private batchRecord(batch: ResolvedBatchCounts) {
+		return {
+			recipeHash: batch.recipeHash,
+			totalEvents: batch.totalEvents,
+			sources: batch.samples.map(({ sampleIndex, sampleId, resolved }) => ({
+				sampleIndex,
+				sampleId,
+				recipeHash: resolved.recipeHash,
+				metadataHash: resolved.metadataHash,
+				startEvent: resolved.startEvent,
+				eventCount: resolved.eventCount,
+			})),
+		};
+	}
 	private jobRecord(job: Job) {
 		return {
 			jobId: job.id,
@@ -1258,7 +1328,11 @@ class FcsAnalysis implements AnalysisService {
 			totalEvents: job.totalEvents,
 			createdAt: job.createdAt,
 			completedAt: job.completedAt,
-			request: job.gateCounts?.request ?? job.estimation?.request ?? job.request,
+			request:
+				job.batchCounts?.request ??
+				job.gateCounts?.request ??
+				job.estimation?.request ??
+				job.request,
 			inputContext: job.inputContext,
 			error: job.error,
 			warnings: job.warnings,
@@ -1279,12 +1353,11 @@ class FcsAnalysis implements AnalysisService {
 			const value = receipt as Record<string, unknown>;
 			return {
 				jobId: id,
-				kind:
-					value.operation === "gate-counts"
-						? "gate-counts"
-						: value.operation === "control-estimation"
-							? "control-estimation"
-							: "fcs-export",
+				kind: ["gate-counts", "batch-gate-counts", "control-estimation"].includes(
+					value.operation as string,
+				)
+					? value.operation
+					: "fcs-export",
 				progressUnit: value.operation === "control-estimation" ? "event-visits" : "events",
 				state: "succeeded",
 				phase: "complete",
@@ -1328,7 +1401,9 @@ class FcsAnalysis implements AnalysisService {
 			});
 	}
 	private async executeGateCountJob(job: Job): Promise<void> {
-		const resolved = job.gateCounts as ResolvedGateCounts;
+		const batch = job.batchCounts;
+		const resolved = batch ?? (job.gateCounts as ResolvedGateCounts);
+		const operation = batch ? "batch-gate-counts" : "gate-counts";
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id),
 			destination = join(this.store.outputs, job.id);
@@ -1338,28 +1413,44 @@ class FcsAnalysis implements AnalysisService {
 		try {
 			signal.throwIfAborted();
 			job.state = "running";
-			job.phase = "counting-populations";
-			await this.store.saveRun(job.id, { ...this.jobRecord(job), gateCounts: resolved });
-			const summary = await this.withGpu(
+			job.phase = batch ? "counting-samples" : "counting-populations";
+			await this.store.saveRun(job.id, {
+				...this.jobRecord(job),
+				...(batch ? { batchCounts: this.batchRecord(batch) } : { gateCounts: resolved }),
+			});
+			const summary = await this.withGpu<BatchCountResult | GateCountResult>(
 				(gpu) =>
-					runGateCounts(
-						gpu.kernels,
-						this.store,
-						resolved,
-						gpu.maxBinding,
-						this.chunkBytes,
-						signal,
-						(count) => {
-							job.processedEvents += count;
-						},
-					),
+					batch
+						? runBatchCounts(
+								gpu.kernels,
+								this.store,
+								batch,
+								gpu.maxBinding,
+								this.chunkBytes,
+								signal,
+								(count, detail) => {
+									job.processedEvents += count;
+									job.progressDetail = detail;
+								},
+							)
+						: runGateCounts(
+								gpu.kernels,
+								this.store,
+								job.gateCounts as ResolvedGateCounts,
+								gpu.maxBinding,
+								this.chunkBytes,
+								signal,
+								(count) => {
+									job.processedEvents += count;
+								},
+							),
 				signal,
 			);
 			signal.throwIfAborted();
 			const artifact = {
 				schemaVersion: 1,
 				jobId: job.id,
-				sampleId: resolved.request.sampleId,
+				...(batch ? { recipe: batch.request } : { sampleId: job.gateCounts?.request.sampleId }),
 				recipeHash: resolved.recipeHash,
 				summary,
 			};
@@ -1372,12 +1463,19 @@ class FcsAnalysis implements AnalysisService {
 			};
 			const receipt = {
 				schemaVersion: 1,
-				operation: "gate-counts",
+				operation,
 				jobId: job.id,
 				state: "succeeded",
 				hostInstanceId: this.instanceId,
 				buildId,
-				input: { sha256: resolved.request.sampleId },
+				input: batch
+					? {
+							samples: batch.request.samples.map((sample, sampleIndex) => ({
+								sampleIndex,
+								sha256: sample.sampleId,
+							})),
+						}
+					: { sha256: job.gateCounts?.request.sampleId },
 				inputContext: job.inputContext,
 				recipe: resolved.request,
 				recipeHash: resolved.recipeHash,
@@ -1417,7 +1515,7 @@ class FcsAnalysis implements AnalysisService {
 			delete job.result;
 			job.receipt = {
 				schemaVersion: 1,
-				operation: "gate-counts",
+				operation,
 				jobId: job.id,
 				state: outcome,
 				hostInstanceId: this.instanceId,
@@ -1427,6 +1525,7 @@ class FcsAnalysis implements AnalysisService {
 				inputContext: job.inputContext,
 				error: job.error,
 				processedEvents: job.processedEvents,
+				progressDetail: job.progressDetail,
 				progressUnit: "events",
 			};
 		} finally {
@@ -1673,7 +1772,7 @@ class FcsAnalysis implements AnalysisService {
 	}
 
 	private async executeJob(job: Job): Promise<void> {
-		if (job.gateCounts) return this.executeGateCountJob(job);
+		if (job.gateCounts || job.batchCounts) return this.executeGateCountJob(job);
 		if (job.estimation) return this.executeControlJob(job);
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id);

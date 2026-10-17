@@ -980,3 +980,56 @@ used the next free slot (0.234 s after 1.550 s queue), and the full suite took
 40.43 s. At most two 1536-MiB jobs, one GPU test worker and one native thread;
 existing isolated dependencies and the unchanged host build were reused. Timings
 are retained under the approved temporary directory's `gate-count-benchmark-validation`.
+
+## 2026-10-17 — One recipe, bounded per-sample count tables
+
+**Decision:** `start_batch_gate_counts` reuses the delivered
+raw stored-F32 count engine across 1–32 distinct immutable samples, with a shared
+gate recipe and per-sample event windows. The sample/gate Cartesian table is capped
+at 512 rows and the recipe at 64 KiB. All metadata/ranges resolve before admission;
+sources execute sequentially under one GPU lease and one bounded job slot.
+
+Results preserve each sample's counts and parent/root denominators. Rows reference
+sample/gate indices in the shared recipe; labels are descriptive only. There are
+no pooled biological statistics or implied unit normalization/comparability.
+Recipes and source bindings are snapshotted before execution. Durable admission
+records store compact source bindings rather than duplicating the complete gate
+recipe per sample. This keeps valid large shared recipes within the record budget.
+
+Single and batch counts share atomic artifact/receipt publication and lifecycle
+code. Any source failure or cancellation discards partial table results; diagnostics
+retain failing source and completed-sample count. Receipt/artifact size is checked
+against the MCP budget before publication. No compute-kernel change or workspace
+mutation accompanies this operation.
+
+**Review corrections:** admission now preserves cancellation rather than converting
+AbortError to a transport-generic internal error. Annotated sample failures retain
+backend error codes/messages/details, including later-source ENOENT; GPU loss
+reclassification nests the original cause. Focused error and maximum-table tests
+pass, including a large shared recipe whose expanded per-sample copies would exceed
+the durable record budget.
+
+**Parser correction:** those fixtures demonstrated that a valid Buffer-backed
+`FcsByteSource` could read the wrong header prefix: Buffer.slice returns a view,
+unlike Uint8Array.slice. `openFcs` now copies the validated 58-byte header view
+before reading its backing buffer. A deterministic prefixed-Buffer regression
+verifies header and multi-chunk data decoding. Independent review approved the
+narrow correction; all 56 FCS stream tests pass.
+
+**Separate E2E fixture diagnosis:** a preliminary combined run passed 368 tests but
+the eight new E2E cases could not enter their suite: two fixture imports passed raw
+row arrays to the file writer, omitting the FCS encoder. A standalone Node check
+wrote `[[3,3,400],[4,4,400]]` as hex `030390040490`, not an FCS header. Both missing
+encoder calls were restored; all eight cases and the real importer contract were
+retained. This malformed-fixture failure is distinct from the valid Buffer-view
+parser defect above. No second product fix was needed for the E2E fixture.
+
+**Final local validation:** all 376 tests in 31 files pass, including 15 batch cases
+and the new parser regression. Lint/typecheck ran concurrently (1.999/1.767 s),
+then the combined suite (69.359 s command wall); final batch elapsed 71.360 s with
+runnable queue delay <0.001 s. Vitest reports transform 1.34 s, setup 0 s, import
+5.48 s and tests 52.96 s. At most two 1536-MiB check jobs, one GPU test worker and
+one native thread were used. Existing isolated dependencies and final host/UI
+builds plus compiled RPC smoke were reused. Full logs/timings are retained under
+the approved temporary directory's `batch-count-final-validation`. Final-head
+Linux/llvmpipe CI remains required before delivery.

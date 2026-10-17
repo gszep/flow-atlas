@@ -185,6 +185,21 @@ export const operationSchemas = {
 		eventCount: index.optional(),
 		gates: z.array(populationGate).min(1).max(128),
 	}),
+	start_batch_gate_counts: z.strictObject({
+		coordinateSpace: z.literal("stored-f32"),
+		samples: z
+			.array(
+				z.strictObject({
+					sampleId: id,
+					label: z.string().min(1).max(128).optional(),
+					startEvent: index.optional(),
+					eventCount: index.optional(),
+				}),
+			)
+			.min(1)
+			.max(32),
+		gates: z.array(populationGate).min(1).max(128),
+	}),
 	cancel_job: z.strictObject({ jobId: id }),
 	get_receipt: z.strictObject({ jobId: id }),
 } as const;

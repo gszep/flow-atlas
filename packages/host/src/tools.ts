@@ -9,6 +9,8 @@ import {
 } from "./contracts.js";
 
 export const operationDescriptions: Record<OperationName, string> = {
+	start_batch_gate_counts:
+		"Apply one explicit stored-F32 gate recipe across 1–32 distinct immutable samples. Returns an indexed per-sample count/frequency table; maximum 512 sample/gate rows, no pooled statistics or workspace edits. Atomic job with provenance and cancellation.",
 	start_gate_counts:
 		"Count explicit raw stored-F32 rectangle, polygon and Boolean populations in streamed immutable FCS input. Returns parent/root denominators and frequencies through a job receipt; no display transforms or workspace edits.",
 	start_control_estimation:

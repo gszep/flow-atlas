@@ -75,6 +75,13 @@ at 64 MiB and 1 GiB, with all 128 result rows exact against analytic expectation
 The 16× input increase accompanied a 1.296× observed lifetime RSS increase;
 limitations and reproduction are in `docs/reference/gate-count-scalability.md`.
 
+The next selected bounded delivery is `start_batch_gate_counts`: a shared recipe
+across explicit immutable samples, with indexed per-sample counts/frequencies and
+source lineage. It reuses the count engine and atomic job lifecycle. Source review
+and all 376 local tests passed, including real MCP and maximum-table boundaries;
+final-head CI precedes merge. This does not introduce pooled biological inference,
+display-space gating or workspace editing.
+
 ### Acquisition / spectral wave
 
 `register_unmixing` adds named detector/fluorochrome OLS with optional L2 residual.

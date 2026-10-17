@@ -239,10 +239,56 @@ try {
 	assert.equal(countsReceipt.buildId, capabilities.buildId);
 	const countsArtifact = JSON.parse(await readFile(join(root, countsStatus.result.path), "utf8"));
 	assert.deepEqual(countsArtifact.summary, countsReceipt.summary);
+	const batchJob = await call("start_batch_gate_counts", {
+		coordinateSpace: "stored-f32",
+		samples: [
+			{ sampleId: sample.sampleId, label: "sample" },
+			{ sampleId: controls.sampleId, label: "controls" },
+		],
+		gates: [
+			{
+				id: "low-a",
+				name: "Low A",
+				parentId: null,
+				dimensions: ["A"],
+				geometry: { type: "rectangle", min: [null], max: [5] },
+			},
+		],
+	});
+	const batchDeadline = Date.now() + 20_000;
+	let batchStatus;
+	do {
+		batchStatus = await call("get_job", { jobId: batchJob.jobId });
+		if (["succeeded", "failed", "cancelled"].includes(batchStatus.state)) break;
+		if (Date.now() > batchDeadline) throw new Error("Batch population counts did not finish");
+		await delay(10);
+	} while (batchStatus.state === "queued" || batchStatus.state === "running");
+	assert.equal(batchStatus.state, "succeeded", JSON.stringify(batchStatus));
+	const batchReceipt = await call("get_receipt", { jobId: batchJob.jobId });
+	assert.equal(batchReceipt.operation, "batch-gate-counts");
+	assert.equal(batchReceipt.eventCount, 5);
+	assert.equal(batchReceipt.summary.sampleCount, 2);
+	assert.equal(batchReceipt.summary.rowCount, 2);
+	assert.deepEqual(
+		batchReceipt.summary.rows.map((row) => [
+			row.sampleIndex,
+			row.gateIndex,
+			row.count,
+			row.rootCount,
+		]),
+		[
+			[0, 0, 1, 2],
+			[1, 0, 2, 3],
+		],
+	);
+	const batchArtifact = JSON.parse(await readFile(join(root, batchStatus.result.path), "utf8"));
+	assert.deepEqual(batchArtifact.recipe, batchReceipt.recipe);
+	assert.deepEqual(batchArtifact.summary, batchReceipt.summary);
 	console.log(
 		JSON.stringify({
 			result: "passed",
-			check: "built Node studio: compensation, acquisition/OLS, control estimation and gate counts",
+			check:
+				"built Node studio: compensation, acquisition/OLS, control estimation, single/batch gate counts",
 			inputHash: sample.sha256,
 			outputHash: status.result.sha256,
 		}),

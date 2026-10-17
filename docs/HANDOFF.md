@@ -1,5 +1,21 @@
 # Handoff
 
+## Batch population counts (2026-10-17)
+
+`start_batch_gate_counts` applies one explicit stored-F32 recipe to 1–32 distinct
+immutable samples, with per-sample windows and an indexed result table capped at
+512 sample/gate rows. Parent/root counts and frequencies remain sample-local;
+there is no pooled statistical inference or implicit processing. The operation
+shares the single-count executor's cancellation and atomic publication path.
+
+Source review passed after preserving admission cancellation, filesystem error
+causes and nested device-loss diagnostics. Maximum-row MCP and later-source failure
+regressions pass. A Buffer-backed FCS header-offset bug exposed by the fixtures was
+fixed and independently reviewed. All 376 local tests pass, including all eight
+protocol/E2E cases, plus lint/typecheck, host/UI builds and compiled RPC smoke.
+Final-head Linux CI is required before merge; see `packages/host/README.md` for
+the contract.
+
 ## Streamed population counts (2026-10-17)
 
 `start_gate_counts` adds explicit stored-F32 rectangle/polygon/Boolean recipes,
