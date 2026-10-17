@@ -2,6 +2,7 @@ import acquisitionSrc from "./kernels/acquisition.wgsl?raw";
 import booleanSrc from "./kernels/boolean.wgsl?raw";
 import compensationSrc from "./kernels/compensation.wgsl?raw";
 import compensationInverseSrc from "./kernels/compensation_inverse.wgsl?raw";
+import controlEstimatorSrc from "./kernels/control_estimator.wgsl?raw";
 import embedsomSrc from "./kernels/embedsom.wgsl?raw";
 import gateSrc from "./kernels/gate.wgsl?raw";
 import gatherSrc from "./kernels/gather.wgsl?raw";
@@ -17,6 +18,7 @@ import transformSrc from "./kernels/transform.wgsl?raw";
 export const KERNEL_SOURCES = {
 	median_histogram: medianHistogramSrc,
 	median_select: medianSelectSrc,
+	control_estimator: controlEstimatorSrc,
 	acquisition: acquisitionSrc,
 	spectral: spectralSrc,
 	spectral_qr: spectralQrSrc,

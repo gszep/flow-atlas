@@ -789,3 +789,71 @@ suite then passed 306 tests in 23 files (including 13 median tests), command wal
 setup 0 s, transform 1.21 s, import 3.60 s and test execution 28.71 s. At most two
 check jobs with 1536 MiB Node heaps and one test/GPU worker; declarations were
 built once before workspace-importing tests. Local Dawn/Metal results only.
+
+## 2026-10-17 — Explicit conventional control median-difference GPU primitive
+
+**Decision:** `estimateControlMatrix(k, channels, controls, maxBinding, options?)`
+implements `conventional-median-difference-primary-f32-v1`, not AutoSpill,
+spectral estimation, inferred gates, spread QC or native FlowJo parity. The private
+wave-3 static report was **verified/read**: it supports positive-minus-negative
+MedianExact and a primary normalization branch, but does not establish complete
+public field mapping, even-count interpolation or numerical equivalence. This
+primitive therefore defines its own explicit mathematical midpoint convention.
+
+Require 1..128 unique nonempty exact detector names, exactly one control per
+detector (arbitrary input control order), and independent positive/negative median
+endpoint vectors in detector order. Counts are positive u32 integers, odd counts
+require repeated endpoints, and lower must be <= upper. CPU work only validates
+and snapshots metadata, packs normal-f32-or-zero endpoints, maps names and copies
+readback. One standalone WGSL dispatch computes paired endpoint differences:
+`delta_j = ((positive.lower_j-negative.lower_j) +
+(positive.upper_j-negative.upper_j))/2`, then `S_ij = delta_j/delta_i`.
+Subtracting endpoints first avoids prematurely rounding two large-baseline medians.
+Result is row-major, rows/columns both in requested detector order. Negative and
+above-unity coefficients are retained without max/max-absolute normalization or
+clipping. Defaults are `minEvents=1`, `minPrimarySeparation=0`; both populations
+must meet support, and primary separation must be strictly above the nonnegative
+f32 threshold. This is not a universal biological QC policy. Parent callers must
+run `prepareCompensation` for rank/conditioning before publishing a usable matrix.
+
+**Numerical policy:** finite normal f32 or zero inputs; reject unsafe intermediate
+differences/sums and coefficients above a conservative magnitude ceiling of 2^126,
+nonzero subnormal intermediates/results, and overflow risk. Tiny differences are
+checked after exact power-of-two scaling to prevent GPU flush-to-zero hiding them.
+This intentionally can reject a mathematically representable final answer; no CPU
+fallback or automatic rescaling substitutes a different profile. The GPU returns
+per-control status, primary separation, invalid-coefficient count and negative
+valid-coefficient count. Unavailable separation is `null` with explicit status;
+unattempted coefficient counts are `null`, not fabricated zero/valid metrics.
+`ControlEstimationError` (`CONTROL_ESTIMATION_REJECTED`) carries the same recursively
+frozen JSON diagnostics as success. No partial matrix is returned on rejection.
+
+**Ownership/limits:** inputs are copied before the first await; result owns its
+Float32Array, while result envelope, channel list and diagnostics are frozen.
+All temporary and staging buffers are destroyed on success or failure. Each buffer
+fits min(caller limit, device storage binding/buffer limits, 128 MiB). The bounded
+endpoint matrix is 16*N*N bytes (256 KiB maximum), quality is 24*N bytes and the
+remaining buffers are smaller. Metadata must fit one binding; this setup budget
+is not an event streaming budget. Dispatch count also obeys the device limit.
+
+**Measured locally:** 22 targeted Dawn/Metal tests pass, covering asymmetric
+2/3/17-detector independent mathematical references, shared negatives, reordered
+controls, odd/even independent counts, negative and above-unity coefficients,
+support/separation thresholds, large common baselines, tiny/huge f32 values,
+underflow/overflow rejection, immutable metadata, 128 detectors, lowered device
+limits and cleanup on success, numerical, pipeline, upload and readback failures.
+No native numerical fixtures or remote llvmpipe results are claimed.
+
+**Measured required validation:** Node 24.18.0 / pnpm 11.16.0, isolated dependency
+setup 4.372 s. Final lint and declaration/typecheck ran independently in parallel
+(1.569 / 2.820 s), then all 315 tests in 23 files passed with one Vitest worker
+(36.098 s command wall time). Tests wait for declarations because workspace imports
+consume their output. Final batch elapsed 38.921 s; runnable-job queue delays were
+0.002 / 0.002 / <0.001 s. Vitest reports setup 0 s, transform 1.15 s, import 3.36 s
+and assertions 24.14 s. At most two check jobs, 1536 MiB heaps, one native thread
+and one GPU suite at a time in that final batch. An earlier invocation mistakenly
+placed flags after an extra `--` and ran suites concurrently; it also caught a
+test fixture wrongly expecting rejection at the exactly permitted coefficient
+ceiling. The fixture and invocation were corrected, not the acceptance policy.
+Full final logs/timings are in the session's approved temporary directory under
+`control-estimator-validation-ses_eb8240337ffeYisU6UJT6khk5w`.
