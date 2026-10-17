@@ -15,7 +15,13 @@ Independent source review passed. Local validation passed 360 tests in 28 files,
 lint/typecheck, host/UI builds and compiled RPC smoke. Nineteen new tests cover
 multi-chunk geometric/Boolean counts, numerical extremes, parent/root denominators,
 admission, cancellation, MCP, restart and terminal-record failure after publication.
-Final-head Linux CI is required before merge.
+Final-head Linux/llvmpipe run `39025192541` passed 317 tests with ten private-oracle
+skips. PR #5 merged at `5f66295b`.
+
+A follow-up measured 128-gate synthetic counting at 64 MiB and 1 GiB: all count/
+denominator rows matched analytic expectations. The larger run took 136.425 s
+from admission to terminal observation at 251.734 MiB process lifetime peak RSS.
+Scope, supervision, hashes and reproduction: `docs/reference/gate-count-scalability.md`.
 
 ## Explicit control-derived compensation (2026-10-17)
 

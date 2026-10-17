@@ -68,7 +68,12 @@ The next implemented milestone is **streamed population counts and frequencies**
 FCS sample and returns counts with parent/root denominators and durable provenance.
 It reuses existing GPU geometric/Boolean semantics, with bounded chunks and
 explicit unsupported cases. Independent review and 360 local tests passed,
-including real MCP and compiled RPC workflows; final-head CI precedes merge.
+including real MCP and compiled RPC workflows. Final-head Linux/llvmpipe run
+`39025192541` passed 317 tests with ten private-oracle skips; PR #5 merged at
+`5f66295b`. The scalability checkpoint measured 16 repeated eight-gate families
+at 64 MiB and 1 GiB, with all 128 result rows exact against analytic expectations.
+The 16× input increase accompanied a 1.296× observed lifetime RSS increase;
+limitations and reproduction are in `docs/reference/gate-count-scalability.md`.
 
 ### Acquisition / spectral wave
 
