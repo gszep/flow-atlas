@@ -54,6 +54,32 @@ families below or availability of a studio/MCP transport.
 
 ## Capability families and agent-oriented delivery
 
+### Native FCS / compensation wave
+
+The second wave adds the runnable `@flow-atlas/host` studio with eleven shared
+MCP/JSON-RPC operations: capabilities, FCS import/list/inspection/spillover/preview,
+compensation registration, export submission/status/cancellation, and receipts.
+`packages/host/README.md` documents the actual agent workflow and bounds.
+
+Conventional square-matrix compensation runs on WebGPU, with exact channel
+mapping and explicit f32 condition/residual policy. FCS I/O is chunked; selection,
+renaming, metadata edits and export remain native to Flow Atlas. Immutable input
+snapshots and output receipts support experiment evidence gathering. This does
+not yet expose the shared gate document's editing API or full collaborative UI.
+
+Independent reviews covered the kernels, streaming codec, transport and composed
+backend. Four composed-backend defects were reproduced, fixed and independently
+rechecked. The corrected local suite passes 242 tests, and the compiled Node
+process passes the real import/compensation/export/shutdown smoke. A 4 GB payload
+run used about 354 MB host RSS; see `docs/reference/native-fcs-benchmark.md` for
+source identity, timing, validation scope and limitations.
+
+The agent is the primary client, including automated wet-lab iteration. Rust is
+conditional on a measured benefit; `docs/reference/programmatic-cytometry.md`
+records Python/R/Rust references and the backend comparison plan. The next
+scientific priorities are named-axis spectral OLS, explicit acquisition scaling,
+control/correction workflows, and streaming gate/reduction jobs.
+
 Status below describes the inspected `38aff03` baseline unless explicitly updated.
 Proposed tool concepts are contracts to develop, not currently callable MCP tools.
 

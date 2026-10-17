@@ -514,3 +514,18 @@ symlink escapes; they do not claim OS isolation from hostile same-user writers.
 The added descriptor verification entails another input read at import. The
 earlier 4 GB baseline is retained with its build identity; repeat the benchmark
 before attributing its timings to this corrected build.
+## 2026-10-17 — Corrected-build scalability measurement and independent recheck
+
+**Measured:** all four composed-backend review repros pass on `bc82737`; independent
+review approved the fixes. Local validation passes 242 tests and the compiled Node
+workflow. Linux CI run `38986915693` passed lint, typecheck, host build, the compiled
+GPU workflow and 199 tests; ten private-oracle tests skipped as intended.
+
+The corrected build processed 50M × 20-channel events (4 GB F32 DATA) with
+353,558,528-byte OS-reported peak host RSS and a 2 GiB watchdog. Import took
+34.817 s, GPU setup/validation 0.121 s, and the export job 58.633 s; the latter
+includes verification, decode, GPU work, readback and file writing. Input/output
+hashes match the earlier run on the same Metal backend. This is one measured
+Node/Dawn baseline, not a Rust comparison or proof of bounded memory for the
+older full-sample gating/rendering paths. Source/build identity and complete
+measurement qualifications are in `reference/native-fcs-benchmark.md`.
