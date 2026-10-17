@@ -6,6 +6,7 @@ export * from "./device.js";
 export * from "./gate.js";
 export * from "./gating.js";
 export * from "./kernels.js";
+export * from "./median.js";
 export * from "./reference.js";
 export * from "./som.js";
 export * from "./spectral.js";

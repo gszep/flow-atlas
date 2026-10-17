@@ -744,3 +744,48 @@ watchdog, sampled-error and measurement limitations are recorded in
 `reference/spectral-acquisition-validation.md`. This confirms bounded host-memory
 behavior for that workload, not exhaustive numerical/vendor parity or a relative
 Rust advantage. Current stage readback/upload is included in the measurement.
+
+## 2026-10-17 — Bounded replayable GPU exact-rank median summaries
+
+**Decision:** `summarizeMedians` returns immutable JSON-friendly lower/upper median
+rank endpoints, not an averaged median. Four replay passes (0..3) select two ranks
+per target with radix-256 histograms and GPU prefix/rank updates. GPU integer
+IEEE-754 monotone keys preserve every finite F32 value including subnormals;
+signed zeros are canonicalized to positive zero. No CPU event filtering, sorting,
+histogram selection or numerical fallback is used. CPU endpoint bit decoding is
+not arithmetic. This explicit `gpu-radix256-exact-rank-v1` profile does not assert
+native MedianExact double-arithmetic or complete vendor parity. The reported
+private wave-3 evidence for positive-minus-negative medians motivates composition,
+not a parity claim for this implementation.
+
+**Ownership/limits:** callers provide immutable, source-hashed replayable inputs;
+chunk boundaries may change. Total row/selected counts and impossible ranks catch
+some replay mutations, not equal-count content changes. Borrowed chunks are never
+mutated. Inputs have 1..4096 unique exact channel names, targets 1..128, ANDed
+inclusive ranges <=16 with unique exact names and exact finite F32 bounds (null
+means unbounded). Nonfinite filter values exclude rows; any selected nonfinite
+target rejects. Empty selections have a typed error. Source counts are capped at
+2^32-1 before GPU submission to prevent per-bin/count overflow.
+
+Event `maxBinding` is separate from fixed scratch state: complete-row windows
+respect that budget, 128 MiB, device buffer/binding and dispatch limits. Histograms
+use at most 256 KiB, rank state 2 KiB, metadata 704 bytes, uniforms 32 bytes and
+counts 12 bytes, independent of population size. Each window is drained before
+its input buffer is destroyed or the iterator advances. Abort/source/dispatch
+failures close active iteration and drain submitted work before owned cleanup.
+Cancellation cannot interrupt an indefinitely pending caller iterator `next()`;
+callers must also arrange cancellation of their source I/O.
+
+**Verified locally:** synthetic CPU-sort test oracles cover odd/even ranks, signs,
+ties, zeros, subnormals, finite extremes, inclusive multi-axis ranges, nonfinite
+policies, offset views, replay chunk changes, multiple windows, immutable metadata,
+limits, typed emptiness, source failures, cancellation and buffer cleanup. These
+are mathematical/kernel tests, not vendor or large-file performance evidence.
+
+**Measured validation:** own dependency installation 3.5 s; Node 24.18.0 / pnpm
+11.16.0. Lint 2.000 s and declaration/typecheck 7.031 s ran in parallel; the full
+suite then passed 306 tests in 23 files (including 13 median tests), command wall
+42.604 s. Total checks 49.641 s; queue overhead <=0.003 s/job. Vitest reports
+setup 0 s, transform 1.21 s, import 3.60 s and test execution 28.71 s. At most two
+check jobs with 1536 MiB Node heaps and one test/GPU worker; declarations were
+built once before workspace-importing tests. Local Dawn/Metal results only.
