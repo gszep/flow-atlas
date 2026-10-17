@@ -27,6 +27,9 @@ export const operationSchemas = {
 		sampleId: id,
 		channelOffset: index.optional(),
 		channelLimit: limit.optional(),
+		keywordOffset: index.optional(),
+		keywordLimit: z.number().int().min(1).max(50).optional(),
+		keywordPrefix: z.string().max(64).optional(),
 	}),
 	get_spillover: z.strictObject({ sampleId: id }),
 	preview_fcs: z.strictObject({

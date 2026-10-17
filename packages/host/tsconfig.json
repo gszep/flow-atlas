@@ -1,6 +1,11 @@
 {
 	"extends": "../../tsconfig.base.json",
-	"compilerOptions": { "rootDir": "src", "outDir": "dist", "types": ["node"] },
+	"compilerOptions": {
+		"rootDir": "src",
+		"outDir": "dist/types",
+		"emitDeclarationOnly": true,
+		"types": ["node", "@webgpu/types"]
+	},
 	"include": ["src"],
 	"references": [{ "path": "../compute" }, { "path": "../fcs" }, { "path": "../model" }]
 }

@@ -69,6 +69,12 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 2.3.1
         version: 2.3.1
+      '@webgpu/types':
+        specifier: ^0.1
+        version: 0.1.72
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
     optionalDependencies:
       webgpu:
         specifier: 0.6.0

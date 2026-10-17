@@ -6,9 +6,12 @@
 	"engines": {
 		"node": ">=24"
 	},
+	"bin": {
+		"flow-atlas": "./dist/main.js"
+	},
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
+			"types": "./dist/types/index.d.ts",
 			"import": "./dist/index.js"
 		}
 	},
@@ -16,7 +19,9 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsc -b"
+		"build": "tsc -b && node build.mjs",
+		"test:built": "node test-built/smoke.mjs",
+		"start": "node dist/main.js"
 	},
 	"dependencies": {
 		"@flow-atlas/compute": "workspace:*",
@@ -30,6 +35,8 @@
 		"webgpu": "0.6.0"
 	},
 	"devDependencies": {
-		"@modelcontextprotocol/client": "2.3.1"
+		"@modelcontextprotocol/client": "2.3.1",
+		"@webgpu/types": "^0.1",
+		"esbuild": "0.28.2"
 	}
 }

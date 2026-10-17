@@ -450,3 +450,49 @@ disconnect cancellation in both protocols, idempotent draining shutdown and stat
 symlink confinement. Contract tests cover every operation, strictness, bounds and
 finite coefficients. No actual GPU device, analysis implementation, collaboration,
 or vendor numerical parity is claimed by these transport tests.
+## 2026-10-17 — Agent-first FCS jobs and a benchmark-gated native backend
+
+**Verified user direction:** the primary client is an agent, either collaborating
+with a human or gathering evidence in an automated experiment loop. Rust is an
+option **if** its scalability benefit is demonstrated. Node 24/Dawn is the current
+baseline; an injected analysis-service boundary and portable WGSL keep a future
+Rust/wgpu worker possible without changing tool names. No Rust performance claim
+or production Python dependency is introduced. The checked OSS references and
+conditional adoption thresholds are in `reference/programmatic-cytometry.md`.
+
+**Implemented choice:** the studio composes the reviewed MCP/JSON-RPC transport
+with native FCS import/inspection, GPU conventional compensation and queued FCS
+exports. The same backend serves both transports. Metadata/event pages are bounded;
+full event streams stay local. Inputs are hashed, bounded-copy snapshots, and each
+export rechecks its input hash. One export runs at a time; GPU calls are serialized
+at chunk boundaries. Caches and queues have explicit limits; sample metadata uses
+LRU eviction while the compact catalog retains identities. Completed observations
+can be reloaded from disk after in-memory eviction.
+
+**Evidence contract:** jobs record source/output hashes, exact operation parameters,
+matrix and GPU diagnostics, shader/build identity, precision, adapter/runtime and
+queue/setup/processing times. A successful FCS and its receipt are published together
+by directory rename. Failed/cancelled work discards its staged FCS; cancellation
+does not preempt submitted GPU work. Committed receipts are authoritative after a
+restart if the secondary status index is missing. Incomplete jobs do not silently
+resume. These are computation receipts, not UI-written human provenance stamps or
+a replacement for the future shared workspace journal.
+
+**Scope:** stored values are decoded to F32. Compensation/export require linear,
+unit-gain participating/exported channels; no implicit acquisition scaling, spectral
+OLS/WLS, or lossless F64/I64 export is claimed. Compensated output removes active
+spillover aliases and records matrix context separately. Raw channel selection must
+retain a complete active spill panel or omit it entirely. Source files are not modified.
+
+**Build choice:** the host build bundles workspace code and the standalone WGSL
+assets for Node, leaving the pinned MCP SDK and optional Dawn addon external.
+Declarations are emitted separately, so incremental typechecking cannot replace a
+working runtime bundle with unresolved `?raw` imports. The studio executable starts
+one process with optional static browser assets; it is not a general-purpose analysis
+CLI. The browser's existing WSP visualization is not claimed to be a full new FCS UI.
+
+**Measured locally before final integration review:** all 236 tests passed, including
+the real MCP→backend compensation/export workflow. A compiled Node-process smoke
+also imported, compensated, exported, re-read and shut down successfully. Kernel,
+streaming I/O and transport changes received separate independent reviews; the
+composed backend still requires its own review and final-head CI.
