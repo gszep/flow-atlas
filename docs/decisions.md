@@ -277,3 +277,255 @@ concurrency. **Measured locally:** 131 tests still pass with two workers; explic
 selecting an empty oracle directory yields two synthetic XML tests passing and
 six oracle tests skipped. Lint/typecheck pass. Remote rerun is required before
 claiming llvmpipe validation of this correction.
+
+## 2026-10-17 — Explicit conventional compensation, GPU-only numerical path
+
+**Verified convention:** FlowUtils `src/flowutils/compensate.py` on its upstream
+master branch (read 2026-10-17) compensates with
+`np.linalg.solve(spill_matrix.T, comp_data.T).T` and reverses with the row product
+`np.dot(inv_comp_data, spill_matrix)`. Source:
+https://raw.githubusercontent.com/whitews/FlowUtils/master/src/flowutils/compensate.py.
+Therefore recorded row y = true row x * S; our WGSL computes x = y * inverse(S),
+without transposing the inverse. This verifies the convention, not FlowJo native parity.
+
+`prepareCompensation(k, channelNames, spill, maxBinding)` returns an immutable,
+device-bound plan with exact-name sample indices and JSON GPU diagnostics.
+`compensateChunk(k, plan, Float32Array, maxBinding)` borrows row-major data and
+returns fresh sample-order data. A standalone setup WGSL kernel uses partial-pivot
+Gauss-Jordan inversion and evaluates both inverse-product residuals and the infinity
+condition number. A separate WGSL kernel applies the inverse to event rows. No CPU
+numerical inversion, solve, compensation, or fallback is shipped. CPU work validates
+metadata and f32 representability only. Inputs must explicitly identify participating
+channels; no detector-name heuristic or automatic application is provided. Acquisition
+scale eligibility is the caller's responsibility.
+
+**Limits/policy:** 1–128 compensated channels, square conventional matrices only;
+spectral OLS/WLS are unsupported. Duplicate/empty/missing exact channel names reject.
+Nonzero matrix coefficients that become subnormal/zero in f32, nonfinite coefficients,
+singular pivots, nonfinite setup arithmetic, condition infinity >10,000 or two-sided
+residual infinity >0.001 reject. These thresholds are conservative product safeguards,
+not a proof of biological suitability. GPU diagnostics are explicitly tagged
+`gpu-computation`, separate from imported FCS metadata. Status 1 = singular pivot,
+2 = nonfinite setup arithmetic, 3 = condition/residual rejection, 4 = nonfinite
+participating input/event arithmetic. Event numericalErrors counts failing output
+channel values in the first rejected window, not imported metadata warnings or a
+whole-file total. No partial output is returned on rejection.
+
+All matrix and staging buffers fit the caller/device limit, capped at 128 MiB;
+the square matrix must fit one binding (64 KiB at the ceiling). Event windows contain
+whole rows, obey dispatch limits, and upload/read back one window at a time. Fresh
+window buffers bind at offset zero rather than allocating a whole-chunk GPU buffer
+and binding dynamic offsets; thus even chunks larger than maxBufferSize are streamable.
+Nonparticipating channels are copied bit-for-bit; negatives and above-range values
+are not clamped. Plans retain only inverse/mapping GPU buffers and must be destroyed.
+Destroy is idempotent, rejects new work, and defers actual buffer release until all
+already-started calls finish. Each call cleans temporary buffers even on rejection.
+
+**Measured tests:** asymmetric 2x2/3x3 mixtures (including a required row swap),
+reordered/subset channels, immutable snapshots, negatives/high values, repeated and
+concurrent calls, 16-byte windows, nonparticipating NaN payload preservation, complete
+row validation, empty chunks, singular/ill-conditioned and invalid metadata rejection,
+overflow diagnostics, success/error cleanup, in-flight destroy, and the 128-channel
+ceiling. Local Dawn/Metal targeted tests pass; the 128-channel setup plus two chunks
+took about 1.4 seconds including cold shader compilation. Remote llvmpipe behavior and
+production large-file throughput remain **unverified**; no spectral or native FlowJo
+numerical parity claim is made.
+
+**Measured required validation:** Node 24.18.0/pnpm 11.16.0, isolated dependency
+setup 2.2 s; lint 0.949 s and declaration/typecheck build 1.753 s in parallel,
+then all 141 tests in 13 files passed (17.294 s command wall time). Total check
+elapsed 19.051 s, scheduling queue <0.001 s per job. At most two CPU check jobs,
+2 GiB heap per process; the full test invocation used one worker, hence one GPU
+suite at a time, after declaration outputs were ready. No UI build was required
+for this compute-only slice. Full logs and timings were retained in the session's
+approved temporary directory under `compensation-validation/`.
+
+## 2026-10-17 — Bounded native FCS binary streams for agent workflows
+
+**Decision:** `@flow-atlas/fcs` adds `FcsByteSource`, `blobSource`, `openFcs` and
+`writeFcs`, with no runtime dependencies. Agents can inspect `reader.metadata`
+(`Omit<FcsFile, "data">`) before pulling event-major chunks. Absolute event slices
+and bounded random-access reads avoid whole-file/prefix buffering, including
+DATA beyond 100 MB. CPU work is binary I/O only, not compensation or transforms.
+The eager `readFcs` API retains its tested historical truncation behavior; the new
+reader exposes `countPolicy: "exact-declared"` and rejects mismatched/truncated
+DATA rather than silently reducing `$TOT`. Metadata count is declared and
+extent-validated, not a claim that every external read has already succeeded.
+
+**Limits and ownership:** combined primary/supplemental encoded TEXT ≤16 MiB;
+channels ≤65,536; spill coefficients ≤2,097,152; one chunk's source bytes plus F32
+decoded bytes ≤128 MiB. JS metadata objects/strings add bounded representation
+overhead. Writer input chunks and each emitted byte array are ≤128 MiB; defaults
+target 1 MiB. No prefetch or output accumulation. Sources and input chunks are
+borrowed; stable backing storage, transport cancellation/timeouts, and retained
+output are caller responsibilities. Signals are checked at await/chunk boundaries
+but cannot interrupt an uncooperative custom `read`/iterator promise. Failed or
+abandoned exports are partial output and must not be published. See
+`packages/fcs/README.md` for the exact API/ownership and compatibility contract.
+
+**Format policy:** single-dataset list-mode FCS2.0/3.0/3.1; F/D and byte-aligned
+8/16/24/32/64-bit unsigned integers, ascending/descending byte order. Existing
+integer range masks remain binary decoding, with uint64 masking now performed
+before float conversion to preserve low bits. Shared decoder returns F32 (D/I64
+precision can be rounded). Writer emits FCS3.1 F32 little-endian, regenerates
+structural/channel fields in array order, uses zero HEADER DATA fields and TEXT
+offsets above 99,999,999, and strips stale spill aliases. Only explicit
+`metadata.spill` writes canonical `$SPILLOVER`; omitted spill prevents accidental
+double-compensation of compensated exports. Spill dimensions, names and finite
+coefficients are validated. No numerical compensation is implemented here.
+
+Nonzero amplification and non-unit gain reject export pending explicit upstream
+numerical conversion; silently changing `$PnE` would mislabel raw logarithmic
+acquisition values. This conservative gain restriction is not a limitation of the
+FCS standard. Negative/above-range float values are not clamped. Zero-event output
+has at least one channel, zero DATA offsets and no DATA bytes. UTF-8 is the explicit
+default for both readers/writer; legacy single-byte reads require `textEncoding:
+"latin1"` (WHATWG Windows-1252). Writer escapes delimiters and rejects empty/NUL
+keyword values or invalid Unicode. Historical-tool Unicode interoperability and
+other zero-event conventions are **unverified**.
+
+**Verified primary sources read:** FlowIO `src/flowio/create_fcs.py` at
+`https://raw.githubusercontent.com/whitews/FlowIO/master/src/flowio/create_fcs.py`
+documents UTF-8, inclusive offsets, zero header offsets above 99,999,999, F32 and
+zero `$PnE`. FlowUtils `src/flowutils/compensate.py` at
+`https://raw.githubusercontent.com/whitews/FlowUtils/master/src/flowutils/compensate.py`
+uses `solve(S.T, data.T).T` and inverse `data @ S`: row-major spill convention is
+recorded row `y = true row x * S`. Implementation here is independently written
+bounded I/O, not copied numerical code.
+
+**Measured locally:** Node 24.18.0, pnpm 11.16.0, isolated dependencies installed
+in 2.3 s. Lint, typecheck and all 186 tests passed; all 33 oracle FCS files match
+eager/streamed values event-by-event with 4,093-event chunks. The new 55 synthetic
+stream tests include sparse >100 MB reads, both endian orders, F/D/mixed-width I,
+uint64 masks, cancellation/cleanup, UTF-8/delimiter roundtrips, output sanitation,
+malformed spill/metadata, exact byte counts, zero events and bounded chunks.
+Absent-oracle execution passes 67 synthetic tests with two oracle tests skipped
+(3.191 s). UI production build passes (3.634 s), guarding the shared browser import.
+
+Validation used a two-job ceiling, 1 GiB Node heaps and one Vitest worker so GPU
+suites do not overlap. Queue/execution/total seconds respectively: lint
+0.004/2.025/2.029; typecheck 0.004/4.429/4.434; tests 2.030/22.530/24.560. Combined
+elapsed 24.561 s; Vitest reports 0 s setup, 0.568 s transform, 0.988 s import and
+14.25 s assertions. Dependency setup is reported separately above. UI build and
+absent-oracle tests ran as independent two-job checks. GPU regression was local
+Dawn/Metal Intel UHD 630, not llvmpipe or remote CI; no remote CI success claimed.
+
+## 2026-10-17 — Injectable studio analysis transport, not a second analysis backend
+
+**Decision:** `@flow-atlas/host` exposes one strict Zod operation registry and an
+injected `AnalysisService.invoke(name, args, signal?)` / `close()` contract. Both
+JSON-RPC `/rpc` and MCP `/mcp` call that contract. File authorization, conventional
+compensation, GPU resources, export jobs and receipts remain backend responsibilities;
+this adapter does not implement them, spectral unmixing, a CPU fallback, or shared
+Yjs/document/journal state. TypeScript remains the host language: no measured Rust
+advantage has been established for this transport-only slice.
+
+**Verified:** official TypeScript SDK `packages/middleware/node/src/streamableHttp.ts`
+and installed pinned v2 declarations support `NodeStreamableHTTPServerTransport`
+from `@modelcontextprotocol/node@2.1.1`, `sessionIdGenerator: undefined`,
+`enableJsonResponse: true`, and `handleRequest(req, res, parsedBody)`. A fresh
+`McpServer` (`@modelcontextprotocol/server@2.3.1`) and transport per HTTP request
+share only the injected backend. Zod 4.6.7 schemas implement Standard Schema;
+the handler cancellation signal is `ctx.mcpReq.signal`, not a v1 callback field.
+The SDK client's Streamable HTTP initialization/list/call flow is the tested
+surface, not the newer `createMcpHandler` discovery protocol or server-push SSE.
+
+**Security:** explicit trusted startup bearer token; literal loopback bind only;
+exact bound Host and optional exact Origin checks; analysis endpoints authenticate
+before parsing; 1 MiB request/JSON-response limits and bounded recursive JSON
+serialization. MCP tool payloads have a conservative 256 KiB limit for envelope
+and escaping headroom. Static built assets are explicitly configured, realpath
+confined and streamed separately. Health contains no token or paths. Backend
+`AnalysisError` fields are public and shared between RPC error.data and MCP
+isError/structuredContent.error; unexpected errors hide details. SDK pre-handler
+input-validation failures retain SDK isError text. Server close aborts HTTP calls,
+closes connections, invokes backend close once and drains outstanding work; backend
+cancellation cooperation is required. Cross-request MCP cancellation notifications
+are not supported by these request-local sessions; job cancellation is explicit.
+
+**Measured:** fake-backend HTTP integration tests exercise SDK client initialization,
+discovery, calls, shared RPC invocation, validation, typed and sanitized errors,
+authentication, Host/Origin rejection, chunked body limits, response limits,
+disconnect cancellation in both protocols, idempotent draining shutdown and static
+symlink confinement. Contract tests cover every operation, strictness, bounds and
+finite coefficients. No actual GPU device, analysis implementation, collaboration,
+or vendor numerical parity is claimed by these transport tests.
+## 2026-10-17 — Agent-first FCS jobs and a benchmark-gated native backend
+
+**Verified user direction:** the primary client is an agent, either collaborating
+with a human or gathering evidence in an automated experiment loop. Rust is an
+option **if** its scalability benefit is demonstrated. Node 24/Dawn is the current
+baseline; an injected analysis-service boundary and portable WGSL keep a future
+Rust/wgpu worker possible without changing tool names. No Rust performance claim
+or production Python dependency is introduced. The checked OSS references and
+conditional adoption thresholds are in `reference/programmatic-cytometry.md`.
+
+**Implemented choice:** the studio composes the reviewed MCP/JSON-RPC transport
+with native FCS import/inspection, GPU conventional compensation and queued FCS
+exports. The same backend serves both transports. Metadata/event pages are bounded;
+full event streams stay local. Inputs are hashed, bounded-copy snapshots, and each
+export rechecks its input hash. One export runs at a time; GPU calls are serialized
+at chunk boundaries. Caches and queues have explicit limits; sample metadata uses
+LRU eviction while the compact catalog retains identities. Completed observations
+can be reloaded from disk after in-memory eviction.
+
+**Evidence contract:** jobs record source/output hashes, exact operation parameters,
+matrix and GPU diagnostics, shader/build identity, precision, adapter/runtime and
+queue/setup/processing times. A successful FCS and its receipt are published together
+by directory rename. Failed/cancelled work discards its staged FCS; cancellation
+does not preempt submitted GPU work. Committed receipts are authoritative after a
+restart if the secondary status index is missing. Incomplete jobs do not silently
+resume. These are computation receipts, not UI-written human provenance stamps or
+a replacement for the future shared workspace journal.
+
+**Scope:** stored values are decoded to F32. Compensation/export require linear,
+unit-gain participating/exported channels; no implicit acquisition scaling, spectral
+OLS/WLS, or lossless F64/I64 export is claimed. Compensated output removes active
+spillover aliases and records matrix context separately. Raw channel selection must
+retain a complete active spill panel or omit it entirely. Source files are not modified.
+
+**Build choice:** the host build bundles workspace code and the standalone WGSL
+assets for Node, leaving the pinned MCP SDK and optional Dawn addon external.
+Declarations are emitted separately, so incremental typechecking cannot replace a
+working runtime bundle with unresolved `?raw` imports. The studio executable starts
+one process with optional static browser assets; it is not a general-purpose analysis
+CLI. The browser's existing WSP visualization is not claimed to be a full new FCS UI.
+
+**Measured locally before final integration review:** all 236 tests passed, including
+the real MCP→backend compensation/export workflow. A compiled Node-process smoke
+also imported, compensated, exported, re-read and shut down successfully. Kernel,
+streaming I/O and transport changes received separate independent reviews; the
+composed backend still requires its own review and final-head CI.
+## 2026-10-17 — Composed-backend review corrections
+
+Independent review reproduced four defects on `74f4c7c`: a pre-existing receipt
+directory symlink exposed an outside-root record; cold-cache hash and metadata
+opens could be separated by replacement; FIFO import blocked before regular-file
+validation; and a 1 KiB event budget rejected an otherwise valid 17×17 matrix.
+
+Reads now check the complete canonical path and descriptor identity, use
+nonblocking read-only admission with authoritative `fstat`, and bind input hashing
+and metadata parsing to the same descriptor. Event arrays remain chunk-bounded,
+while persistent matrix bindings use the actual GPU binding limit. Regression
+tests exercise each case, including cancellation-safe FIFO cleanup and both
+preview/export with the larger matrix. The filesystem checks reject ordinary
+symlink escapes; they do not claim OS isolation from hostile same-user writers.
+
+The added descriptor verification entails another input read at import. The
+earlier 4 GB baseline is retained with its build identity; repeat the benchmark
+before attributing its timings to this corrected build.
+## 2026-10-17 — Corrected-build scalability measurement and independent recheck
+
+**Measured:** all four composed-backend review repros pass on `bc82737`; independent
+review approved the fixes. Local validation passes 242 tests and the compiled Node
+workflow. Linux CI run `38986915693` passed lint, typecheck, host build, the compiled
+GPU workflow and 199 tests; ten private-oracle tests skipped as intended.
+
+The corrected build processed 50M × 20-channel events (4 GB F32 DATA) with
+353,558,528-byte OS-reported peak host RSS and a 2 GiB watchdog. Import took
+34.817 s, GPU setup/validation 0.121 s, and the export job 58.633 s; the latter
+includes verification, decode, GPU work, readback and file writing. Input/output
+hashes match the earlier run on the same Metal backend. This is one measured
+Node/Dawn baseline, not a Rust comparison or proof of bounded memory for the
+older full-sample gating/rendering paths. Source/build identity and complete
+measurement qualifications are in `reference/native-fcs-benchmark.md`.

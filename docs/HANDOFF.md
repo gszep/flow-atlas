@@ -1,5 +1,24 @@
 # Handoff
 
+## Native FCS and agent studio (2026-10-17)
+
+The agent-first FCS workflow now lives in `packages/host`: MCP and JSON-RPC share
+one backend for immutable import, bounded inspection, explicit GPU compensation,
+streamed FCS export, cancellation and receipts. See its README for launch and
+tool contracts. It is a FCS-focused studio, not yet a full collaborative gate editor.
+
+`packages/fcs` has bounded random-access read and streaming FCS3.1 F32 write APIs;
+`packages/compute` has conventional GPU compensation with exact channel mapping
+and explicit numerical diagnostics. Unsupported acquisition scaling and spectral
+algorithms remain explicit. Original bytes are retained; exported F64/I64 values
+are not claimed lossless.
+
+The corrected build processed a 4 GB synthetic payload at about 354 MB peak host
+RSS. Details: `docs/reference/native-fcs-benchmark.md`. Rust remains a measured
+alternative, not an assumed speedup; references are in
+`docs/reference/programmatic-cytometry.md`. Native FlowJo coverage reached 54
+unique decompiled entrypoints; see `docs/reference/compensation-research.md`.
+
 ## FlowJo 11 investigation (2026-10-17)
 
 See `docs/reference/flowjo-11-rea.md` for the initial REA analysis of installed FlowJo

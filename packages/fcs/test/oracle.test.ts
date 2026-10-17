@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { column, readFcs, readHeader } from "../src/index.js";
+import { column, openFcs, readFcs, readHeader } from "../src/index.js";
 
 // Oracle dataset from FlowAtlas.jl (not committed). Tests skip when absent.
 const ORACLE =
@@ -30,7 +31,7 @@ describe.skipIf(files.length === 0)("oracle FCS files", () => {
 		expect(files.length).toBe(33);
 	});
 
-	it.each(files.map((f) => [f.slice(ORACLE.length + 1), f]))("reads %s", (_, path) => {
+	it.each(files.map((f) => [f.slice(ORACLE.length + 1), f]))("reads %s", async (_, path) => {
 		const buf = toArrayBuffer(path);
 		const h = readHeader(buf);
 		expect(h.version).toBe("FCS3.0");
@@ -48,6 +49,29 @@ describe.skipIf(files.length === 0)("oracle FCS files", () => {
 			for (let i = 0; i < col.length; i++) if (!Number.isFinite(col[i] as number)) nonFinite++;
 		}
 		expect(nonFinite).toBe(0);
+
+		const handle = await open(path, "r");
+		try {
+			const reader = await openFcs({
+				size: (await handle.stat()).size,
+				async read(offset, length) {
+					const bytes = new Uint8Array(length);
+					const result = await handle.read(bytes, 0, length, offset);
+					return bytes.subarray(0, result.bytesRead);
+				},
+			});
+			expect(reader.metadata.eventCount).toBe(f.eventCount);
+			let mismatches = 0;
+			let received = 0;
+			for await (const chunk of reader.chunks({ chunkEvents: 4093 })) {
+				for (let i = 0; i < chunk.data.length; i++)
+					if (chunk.data[i] !== f.data[chunk.start * f.channels.length + i]) mismatches++;
+				received += chunk.count;
+			}
+			expect([mismatches, received]).toEqual([0, f.eventCount]);
+		} finally {
+			await handle.close();
+		}
 	});
 
 	it("channel names are unique and stains present for fluorescence channels", () => {
