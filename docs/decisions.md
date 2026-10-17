@@ -951,3 +951,32 @@ dependency setup took 3.9 s before this batch. Logs/timings are retained under t
 approved temporary directory's `gate-count-final-validation`. These are validation
 costs, not a large-file throughput benchmark or native/vendor parity measurement.
 Final-head Linux/llvmpipe CI remains required before merge.
+
+## 2026-10-17 — Measured gate-count scalability, no runtime change
+
+**Measured:** the delivered `5f66295b` count job processed synthetic 64-MiB and
+1-GiB DATA payloads through 128 gate definitions (16 repeated eight-gate families).
+Every result count, denominator and frequency matched independently derived
+analytic expectations. Admission-to-terminal-observation times were 16.637 and
+136.425 s; process lifetime OS peak RSS was 203,640,832 and 263,962,624 bytes.
+
+The 16× input increase and 1.296× observed RSS increase support this bounded
+streaming baseline, not constant-memory proof, isolated GPU timing, typical-panel
+performance, vendor parity or a relative Rust advantage. Runs used a fresh service
+process sequentially on the same Metal adapter; OS/driver caches were not cleared.
+An independent watchdog enforced progress/wall/RSS limits and cleaned owned files.
+Initial benchmark heap-guard failure was retained and corrected before measurement.
+
+**Verified:** independent review reconstructed all 128 expected rows per run and
+cross-checked runner/build hashes and persisted evidence. The committed developer
+runner is `packages/host/bench/gate-counts.mjs`; full methodology, measured phases,
+source identities and reproduction are in `reference/gate-count-scalability.md`.
+No computational runtime or agent API changes accompany this checkpoint.
+
+**Validation:** lint, typecheck, benchmark syntax and all 360 tests passed. Final
+batch elapsed 57.428 s: lint/typecheck ran concurrently (1.800/1.546 s), syntax
+used the next free slot (0.234 s after 1.550 s queue), and the full suite took
+55.625 s. Vitest reported setup 0 s, transform 1.46 s, import 4.98 s and tests
+40.43 s. At most two 1536-MiB jobs, one GPU test worker and one native thread;
+existing isolated dependencies and the unchanged host build were reused. Timings
+are retained under the approved temporary directory's `gate-count-benchmark-validation`.
