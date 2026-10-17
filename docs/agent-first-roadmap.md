@@ -88,7 +88,15 @@ explicit raw-space gate recipes and the exact GPU radix primitive, with four-pas
 replay, selected support and both central order statistics. Midpoint interpolation,
 vendor-specific median conventions and batch intensity tables remain distinct work.
 Independent reviews and 417 local tests passed, including real MCP, restart,
-replay-integrity and bounded-resource cases; final-head CI precedes merge.
+replay-integrity and bounded-resource cases. Final-head Linux CI `39046514475`
+passed 374 tests with ten private-oracle skips; PR #8 merged at `af0ef28`.
+
+The next implemented bounded delivery is batch median-rank tables: the same explicit
+population/channel recipe over a distinct sample list, with indexed endpoints and
+per-sample support/ranks. It reuses the existing runner and numerical conventions;
+empty or invalid sources fail the whole atomic table rather than being imputed.
+Independent source review, 432 local tests, host build and compiled RPC smoke
+passed; final-head CI precedes merge.
 
 ### Acquisition / spectral wave
 

@@ -9,6 +9,8 @@ import {
 } from "./contracts.js";
 
 export const operationDescriptions: Record<OperationName, string> = {
+	start_batch_population_medians:
+		"Compute per-sample exact median-rank tables for one shared stored-F32 population and channel list across 1–32 distinct immutable samples. At most 512 sample/channel rows. Four passes per source, atomic publication, no pooling/midpoint interpolation; empty or selected-nonfinite sources reject with source diagnostics.",
 	start_population_medians:
 		"Compute exact lower/upper F32 median rank endpoints for one explicit stored-F32 gate population (or null for the selected root). Four replay passes; 1–32 named channels; no midpoint interpolation or vendor parity. Empty populations and selected nonfinite targets reject with diagnostics.",
 	start_batch_gate_counts:

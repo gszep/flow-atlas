@@ -85,6 +85,23 @@ const populationGate = z.strictObject({
 		}),
 	]),
 });
+const batchSamples = z
+	.array(
+		z.strictObject({
+			sampleId: id,
+			label: z.string().min(1).max(128).optional(),
+			startEvent: index.optional(),
+			eventCount: index.optional(),
+		}),
+	)
+	.min(1)
+	.max(32);
+const medianPopulation = {
+	coordinateSpace: z.literal("stored-f32"),
+	populationId: z.string().min(1).max(128).nullable(),
+	gates: z.array(populationGate).max(128).default([]),
+	channels: z.array(z.string().min(1).max(256)).min(1).max(32),
+};
 export const operationSchemas = {
 	list_capabilities: z.strictObject({}),
 	import_fcs: z.strictObject({ path: z.string().min(1) }),
@@ -187,28 +204,16 @@ export const operationSchemas = {
 	}),
 	start_batch_gate_counts: z.strictObject({
 		coordinateSpace: z.literal("stored-f32"),
-		samples: z
-			.array(
-				z.strictObject({
-					sampleId: id,
-					label: z.string().min(1).max(128).optional(),
-					startEvent: index.optional(),
-					eventCount: index.optional(),
-				}),
-			)
-			.min(1)
-			.max(32),
+		samples: batchSamples,
 		gates: z.array(populationGate).min(1).max(128),
 	}),
 	start_population_medians: z.strictObject({
 		sampleId: id,
-		coordinateSpace: z.literal("stored-f32"),
-		populationId: z.string().min(1).max(128).nullable(),
-		gates: z.array(populationGate).max(128).default([]),
-		channels: z.array(z.string().min(1).max(256)).min(1).max(32),
+		...medianPopulation,
 		startEvent: index.optional(),
 		eventCount: index.optional(),
 	}),
+	start_batch_population_medians: z.strictObject({ ...medianPopulation, samples: batchSamples }),
 	cancel_job: z.strictObject({ jobId: id }),
 	get_receipt: z.strictObject({ jobId: id }),
 } as const;
