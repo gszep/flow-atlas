@@ -9,7 +9,14 @@ empty/nonfinite rejection and atomic publication policies are retained; no pooli
 or midpoint calculation is introduced. Source review and all 432 local tests passed,
 including 15 new cases covering both 16×32 and 32×16 boundaries, source failures,
 cancellation and restart. Lint/typecheck, host build and compiled RPC smoke pass.
-Final-head Linux CI is required before merge.
+Final-head Linux CI `39052144927` passed 389 tests with ten private-oracle skips;
+PR #9 merged at `440fa09`.
+
+The median-path scalability follow-up verified all four rank endpoints at 64 MiB
+and 1 GiB. The larger gated run made 268,435,456 event-visits in 30.581 s from
+admission through terminal observation, with 389.461 MiB OS lifetime peak RSS.
+The recipe validates 128 definitions but selects a two-gate dependency closure.
+Scope, hashes and reproduction: `docs/reference/population-median-scalability.md`.
 
 ## Gated median-rank summaries (2026-10-18)
 

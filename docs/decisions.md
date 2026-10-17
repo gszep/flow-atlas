@@ -1133,3 +1133,40 @@ temporary fixture tree was removed after process cleanup. These are validation
 measurements, not a cohort throughput benchmark. Logs/timings are retained under
 the approved temporary directory's `batch-medians-final-validation`. Final-head
 Linux/llvmpipe CI remains required before merge.
+
+## 2026-10-18 — Median-path scalability evidence, no runtime change
+
+**Measured:** the delivered `440fa09` median runner processed 64-MiB and 1-GiB
+synthetic DATA inputs, selecting a triangle whose dependency closure contains two
+gates from 128 validated definitions. Four target columns have independently
+derived central rank endpoints; both scale runs and both 16-MiB root/triangle
+smokes matched all endpoints, support, rank indices and four-pass event-visits.
+
+The 1-GiB case visited 67,108,864 source rows four times and selected 33,587,200
+rows. Its central ranks 16,793,599/600 produced distinct Index endpoints
+307249/307250. Admission-through-observation took 30.581 s and lifetime process
+peak RSS was 408,379,392 bytes, versus 2.824 s and 246,710,272 bytes at 64 MiB.
+The 16× input increase accompanied a 1.655× observed RSS increase. These are
+single-device observations with uncontrolled caches, not constant-memory proof,
+GPU-only timings, physical I/O bandwidth, native parity or cohort throughput.
+
+**Verified:** independent source/record/prose review reconstructed expected
+per-column ranks, artifact/receipt hashes, build/shader fingerprints and progress
+records. All supervised runs exited 0 without watchdog termination, and their
+owned data directories were removed. The committed runner is
+`packages/host/bench/population-medians.mjs`; methodology, limits, identities and
+reproduction are in `reference/population-median-scalability.md`. Rank indices
+refer to each channel's sorted values, not original event positions.
+
+**Final validation:** lint, typecheck and all 432 tests in 37 files passed. The
+runner's syntax and both smoke/scale profiles were verified separately; unchanged
+runtime build artifacts and isolated dependencies were reused. Lint/typecheck ran
+concurrently (2.336/1.335 s), then the full suite (75.710 s command wall); final
+batch elapsed 78.052 s with queue delay <0.001 s. Vitest reports transform 1.06 s,
+setup 0 s, import 6.12 s and tests 59.18 s. Two bounded check slots, one GPU worker,
+1536-MiB old spaces and 16-MiB semi-spaces were used under 180-s command/90-s stall
+deadlines and a 4-GiB observed process-tree RSS ceiling. No limit terminated work;
+sampled combined peak was 858,075,136 bytes. The owned fixture tree was removed
+after process cleanup. Logs/timings are in the approved temporary directory's
+`population-median-benchmark-validation`. These are validation costs, separate
+from the benchmark measurements. Final-head Linux CI remains required for merge.
