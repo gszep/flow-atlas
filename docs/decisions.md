@@ -1271,3 +1271,45 @@ observed RSS ceiling; no limit terminated work. Sampled combined RSS peaked at
 earlier timeout remains under `local-delivery-final-validation`. Runtime bundles
 were unchanged and reused for this acceptance. Final-head CI and post-merge
 served-source verification close delivery.
+
+## 2026-10-18 — Read-only workspace group discovery
+
+**Decision (implemented; delivery validation pending):** extend the existing workspace inspector
+with group summaries and ordered member pages. This closes the metadata discovery
+gap between saved model groups and explicit sample selection for existing analysis
+jobs. Preserve declared membership order and distinct logical IDs, including shared
+file hashes; no pooling, import, numerical work or document mutation is implied.
+
+Reuse the document-byte/revision guards, model validation, 1-MiB input bound and
+256-KiB dynamic response pagination. Existing view shapes remain unchanged; group
+selectors are explicit and incompatible filters reject. During the higher-priority
+AI Tokens/Chi co-drive, this slice uses one bounded CPU worker and metadata-only
+checks. Required broader validation and served-version acceptance remain delivery
+gates; completed PR #12 checks are not being rerun merely for reconciliation.
+
+**Verified CPU scope:** seven tests pass for ordered/overlapping/empty groups,
+distinct logical IDs sharing a file hash, strict filters, stale guards, model
+reference validation, long-ID byte pagination, unchanged sources/catalog and real
+MCP inspection. A mandatory device-acquisition spy asserts zero calls. Independent
+source review passed. Lint passed; typecheck caught an optional `groupId` assignment,
+corrected by using the already-validated group's ID. Typecheck and the focused file
+then passed (1.33 s Vitest, including 373 ms tests, 433 ms transform, 769 ms import,
+0 ms setup). Checks used one worker, 768-MiB old space, 16-MiB semi-spaces and
+`nice +10`; no GPU/full-suite/build or external-orchestrator work was launched.
+The full required checks, commit/PR and post-merge acceptance remain outstanding.
+
+**2026-10-19 final local validation:** resumed the unfinished delivery handoff under
+the chief's continuation direction. All 456 tests in 41 files passed, with no
+coverage removed. Lint 2.280 s, typecheck 1.073 s, host build 1.259 s, full suite
+77.999 s and served RPC/MCP acceptance 2.775 s ran sequentially in one `nice +10`
+slot to preserve priority resources. Total elapsed 85.390 s; intentional runner
+queue wait was zero. Vitest reports transform 1.11 s, setup 0 s, import 6.37 s and
+tests 61.62 s. Node old space was 1024 MiB with 16-MiB semi-spaces; native/runner
+concurrency was bounded. A process-group supervisor enforced 180-s command,
+90-s stall and 2-GiB observed RSS limits; peak was 843,685,888 bytes and no limit
+terminated work. Owned temporary fixtures were removed. Logs/timings are retained
+under the approved temporary directory's `workspace-groups-final-validation`.
+The served candidate fingerprint was
+`ed1171bde21b5029e93888f3a34c35a010080d128896cc1062083c785bbaa660`.
+Final-head CI and merged-revision acceptance still gate delivery; no benchmark or
+external-orchestrator work was started.

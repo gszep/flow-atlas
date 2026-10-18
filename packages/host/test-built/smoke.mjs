@@ -396,7 +396,10 @@ try {
 					modified: "2026-10-18T00:00:00Z",
 				},
 			],
-			groups: [],
+			groups: [
+				{ id: "cohort", name: "Cohort", sampleIds: ["doc-sample"] },
+				{ id: "empty", name: "Empty", sampleIds: [] },
+			],
 			annotations: [],
 		},
 		null,
@@ -408,6 +411,40 @@ try {
 	assert.equal(inspected.document.sha256, workspaceSha);
 	assert.equal(inspected.document.revision, 3);
 	assert.equal(inspected.items[0].id, "doc-sample");
+	assert.equal(Object.hasOwn(inspected, "groupId"), false);
+	const groupPage = await call("inspect_workspace", {
+		path: "workspace.flowatlas.json",
+		view: "groups",
+		expectedRevision: 3,
+		expectedSha256: workspaceSha,
+	});
+	assert.deepEqual(groupPage.items, [
+		{ id: "cohort", name: "Cohort", sampleCount: 1 },
+		{ id: "empty", name: "Empty", sampleCount: 0 },
+	]);
+	const groupMembers = await mcpClient.callTool({
+		name: "inspect_workspace",
+		arguments: {
+			path: "workspace.flowatlas.json",
+			view: "group-samples",
+			groupId: "cohort",
+			expectedRevision: 3,
+			expectedSha256: workspaceSha,
+		},
+	});
+	assert.notEqual(groupMembers.isError, true);
+	const members = JSON.parse(groupMembers.content.find((part) => part.type === "text").text);
+	assert.equal(members.groupId, "cohort");
+	assert.equal(members.document.sha256, workspaceSha);
+	assert.equal(members.items[0].id, "doc-sample");
+	assert.equal(members.items[0].file.sha256, sample.sampleId);
+	const emptyGroup = await call("inspect_workspace", {
+		path: "workspace.flowatlas.json",
+		view: "group-samples",
+		groupId: "empty",
+	});
+	assert.deepEqual(emptyGroup.items, []);
+	assert.equal(emptyGroup.nextOffset, null);
 	const mcpInspection = await mcpClient.callTool({
 		name: "inspect_workspace",
 		arguments: { path: "workspace.flowatlas.json" },

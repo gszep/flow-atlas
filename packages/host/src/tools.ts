@@ -10,7 +10,7 @@ import {
 
 export const operationDescriptions: Record<OperationName, string> = {
 	inspect_workspace:
-		"Read a confined model-schema workspace JSON (up to 1 MiB), returning byte hash/revision and byte-bounded sample, gate or channel metadata pages. Optional hash/revision guard keeps pages consistent. No workspace edits or implicit FCS import.",
+		"Read a confined model-schema workspace JSON (up to 1 MiB), returning byte hash/revision and byte-bounded sample, gate, channel, group or group-member metadata pages. Optional hash/revision guard keeps pages consistent. No workspace edits or implicit FCS import.",
 	start_workspace_gate_counts:
 		"Count one workspace sample's gates from an admitted document snapshot bound to expected byte hash and revision. Resolves channel IDs to exact names and requires an already-imported FCS artifact. Stored-F32 computation and immutable receipt lineage; no document writes.",
 	start_workspace_population_medians:
