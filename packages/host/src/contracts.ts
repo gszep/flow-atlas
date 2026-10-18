@@ -102,7 +102,35 @@ const medianPopulation = {
 	gates: z.array(populationGate).max(128).default([]),
 	channels: z.array(z.string().min(1).max(256)).min(1).max(32),
 };
+const documentId = z.string().min(1).max(4096);
+const workspaceIdentity = {
+	path: z.string().min(1).max(1024),
+	expectedRevision: index,
+	expectedSha256: z.string().regex(/^[a-f0-9]{64}$/),
+};
+const workspaceAnalysis = {
+	...workspaceIdentity,
+	sampleId: documentId,
+	coordinateSpace: z.literal("stored-f32"),
+	startEvent: index.optional(),
+	eventCount: index.optional(),
+};
 export const operationSchemas = {
+	inspect_workspace: z.strictObject({
+		path: workspaceIdentity.path,
+		expectedRevision: index.optional(),
+		expectedSha256: workspaceIdentity.expectedSha256.optional(),
+		view: z.enum(["samples", "gates", "channels"]).default("samples"),
+		sampleId: documentId.optional(),
+		offset: index.optional(),
+		limit: limit.optional(),
+	}),
+	start_workspace_gate_counts: z.strictObject(workspaceAnalysis),
+	start_workspace_population_medians: z.strictObject({
+		...workspaceAnalysis,
+		populationId: documentId.nullable(),
+		channels: z.array(documentId).min(1).max(32),
+	}),
 	list_capabilities: z.strictObject({}),
 	import_fcs: z.strictObject({ path: z.string().min(1) }),
 	list_samples: z.strictObject({ offset: index.optional(), limit: limit.optional() }),
