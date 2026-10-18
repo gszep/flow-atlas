@@ -1,5 +1,14 @@
 # Handoff
 
+## Local delivery acceptance
+
+`docs/DELIVERY.md` defines the applicable source-built local studio surface and
+the review/checks → merge → build/serve → acceptance sequence. The compiled smoke
+consumes the application over both RPC and MCP, verifies a common build fingerprint,
+and reports `servedBuildId`, API/Node versions and accepted endpoint paths. Its
+owned synthetic studio is drained after acceptance; a persistent operator instance
+requires an explicit service/experiment-root binding.
+
 ## Read-only workspace analysis (2026-10-18)
 
 `inspect_workspace` exposes bounded model-v1 JSON metadata pages. Workspace count
@@ -11,8 +20,8 @@ arguments, both hashes and the source binding. Workspace bytes/stamps are untouc
 Source review and all 449 local tests passed, including 17 new workspace cases. A
 reproduced abort-plus-document-change race was corrected to preserve cancellation
 while still closing the descriptor. Lint/typecheck, host build and compiled RPC
-smoke pass. Final-head Linux CI is required before merge. Existing stored-F32
-numerical limits remain explicit.
+smoke pass. Final-head Linux CI `39082286361` passed 406 tests with ten private-oracle
+skips; PR #11 merged at `977141c`. Existing stored-F32 numerical limits remain explicit.
 
 ## Batch median-rank tables (2026-10-18)
 

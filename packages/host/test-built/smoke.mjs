@@ -7,12 +7,14 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { readFcs, writeFcs } from "@flow-atlas/fcs";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 const root = await mkdtemp(join(tmpdir(), "flow-atlas-built-"));
 const token = randomBytes(24).toString("hex");
 let child;
 let exited;
 let cleanupError;
+let mcpClient;
 try {
 	const file = await open(join(root, "input.fcs"), "wx");
 	try {
@@ -113,6 +115,16 @@ try {
 	};
 	const capabilities = await call("list_capabilities", {});
 	assert.match(capabilities.buildId, /^[a-f0-9]{64}$/);
+	mcpClient = new Client({ name: "built-studio-acceptance", version: "1" });
+	await mcpClient.connect(
+		new StreamableHTTPClientTransport(new URL(`${ready.url}/mcp`), {
+			requestInit: { headers: { authorization: `Bearer ${token}` } },
+		}),
+	);
+	const mcpCapabilities = await mcpClient.callTool({ name: "list_capabilities", arguments: {} });
+	assert.notEqual(mcpCapabilities.isError, true);
+	const mcpIdentity = JSON.parse(mcpCapabilities.content.find((part) => part.type === "text").text);
+	assert.equal(mcpIdentity.buildId, capabilities.buildId);
 	const sample = await call("import_fcs", { path: "input.fcs" });
 	const matrix = await call("register_compensation", { sampleId: sample.sampleId });
 	const job = await call("start_fcs_export", {
@@ -396,6 +408,15 @@ try {
 	assert.equal(inspected.document.sha256, workspaceSha);
 	assert.equal(inspected.document.revision, 3);
 	assert.equal(inspected.items[0].id, "doc-sample");
+	const mcpInspection = await mcpClient.callTool({
+		name: "inspect_workspace",
+		arguments: { path: "workspace.flowatlas.json" },
+	});
+	assert.notEqual(mcpInspection.isError, true);
+	assert.equal(
+		JSON.parse(mcpInspection.content.find((part) => part.type === "text").text).document.sha256,
+		workspaceSha,
+	);
 	const workspaceBase = {
 		path: "workspace.flowatlas.json",
 		expectedRevision: 3,
@@ -408,7 +429,12 @@ try {
 			operation === "start_workspace_gate_counts"
 				? workspaceBase
 				: { ...workspaceBase, populationId: "saved-low-a", channels: ["model-B"] };
-		const scopedJob = await call(operation, args);
+		let scopedJob;
+		if (operation === "start_workspace_gate_counts") {
+			const response = await mcpClient.callTool({ name: operation, arguments: args });
+			assert.notEqual(response.isError, true);
+			scopedJob = JSON.parse(response.content.find((part) => part.type === "text").text);
+		} else scopedJob = await call(operation, args);
 		const deadline = Date.now() + 20_000;
 		let scopedStatus;
 		do {
@@ -418,7 +444,10 @@ try {
 			await delay(10);
 		} while (scopedStatus.state === "queued" || scopedStatus.state === "running");
 		assert.equal(scopedStatus.state, "succeeded", JSON.stringify(scopedStatus));
+		assert.equal(scopedStatus.live, true);
+		assert.equal(scopedStatus.hostInstanceId, scopedJob.hostInstanceId);
 		const scopedReceipt = await call("get_receipt", { jobId: scopedJob.jobId });
+		assert.equal(scopedReceipt.buildId, capabilities.buildId);
 		assert.equal(scopedReceipt.workspace.document.sha256, workspaceSha);
 		assert.equal(scopedReceipt.workspace.document.revision, 3);
 		assert.equal(scopedReceipt.workspace.sample.id, "doc-sample");
@@ -438,6 +467,10 @@ try {
 	console.log(
 		JSON.stringify({
 			result: "passed",
+			servedBuildId: capabilities.buildId,
+			apiVersion: capabilities.version,
+			nodeVersion: process.version,
+			acceptedEndpoints: ["/rpc", "/mcp"],
 			check:
 				"built Node studio: FCS processing, single/batch statistics and read-only workspace-bound analysis",
 			inputHash: sample.sha256,
@@ -445,6 +478,11 @@ try {
 		}),
 	);
 } finally {
+	try {
+		await mcpClient?.close();
+	} catch (error) {
+		cleanupError = error;
+	}
 	try {
 		if (child) {
 			child.kill("SIGTERM");

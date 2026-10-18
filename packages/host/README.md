@@ -30,6 +30,10 @@ The existing browser visualization remains a WSP client; native FCS operations
 are primarily agent tools, not a new compensation GUI. There is one studio entrypoint,
 not a separate suite of command-line analysis commands.
 
+Delivery, post-merge served-version acceptance and rollback are documented in
+`docs/DELIVERY.md`. The compiled acceptance command reports the build fingerprint
+actually consumed over both RPC and MCP, then drains its owned studio process.
+
 ## Agent workflow
 
 1. `list_capabilities` describes supported formats, precision, bounds and unsupported

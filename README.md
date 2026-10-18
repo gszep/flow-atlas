@@ -13,10 +13,14 @@ Start with [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/decisions.md`](docs/d
 ```sh
 pnpm install
 pnpm test          # unit + kernel (Dawn/Node) + parity tests
-pnpm dev           # http://localhost:3141 — drop the FlowAtlas.jl data/ folder, or open /?oracle to auto-load it
+pnpm --filter @flow-atlas/ui dev  # local browser UI — drop data/ or open /?oracle
 ```
 
 Requires a WebGPU browser (Chrome/Edge 113+). `?oracle=N` loads the first N oracle FCS files.
+
+For agent-driven native analysis, use the local studio workflow in
+`packages/host/README.md`. Build, served-version acceptance and rollback are
+documented in `docs/DELIVERY.md`.
 
 ## Packages
 
@@ -32,6 +36,7 @@ Requires a WebGPU browser (Chrome/Edge 113+). `?oracle=N` loads the first N orac
 
 | File | Purpose |
 |---|---|
+| `docs/DELIVERY.md` | Local application delivery, actual MCP/RPC acceptance and rollback |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Decisions made so far, open questions, first tasks. **Read first.** |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log with evidence (measured / verified / unverified) |
 | [`docs/architecture.md`](docs/architecture.md) | Target architecture, package layout, agent tool surface, phases |
