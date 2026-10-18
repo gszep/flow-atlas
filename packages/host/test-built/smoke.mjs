@@ -501,6 +501,62 @@ try {
 		}
 	}
 	assert.equal(await readFile(join(root, "workspace.flowatlas.json"), "utf8"), workspaceText);
+	// A separate synthetic source explicitly defines a new lossy compiled recipe.
+	// In original inclusive JS geometry only A=2 passes; F32(9.8) > 9.8.
+	const lossyModel = JSON.parse(workspaceText);
+	lossyModel.gates[0].geometry.max[0] = 9.8;
+	const lossyText = JSON.stringify(lossyModel);
+	await writeFile(join(root, "lossy.flowatlas.json"), lossyText);
+	const lossyBase = {
+		...workspaceBase,
+		path: "lossy.flowatlas.json",
+		expectedSha256: createHash("sha256").update(lossyText).digest("hex"),
+	};
+	const strictRejected = await mcpClient.callTool({
+		name: "start_workspace_gate_counts",
+		arguments: lossyBase,
+	});
+	assert.equal(strictRejected.isError, true);
+	assert.match(JSON.stringify(strictRejected.content), /INVALID_GATE_RECIPE/);
+	for (const operation of ["start_workspace_gate_counts", "start_workspace_population_medians"]) {
+		const args = {
+			...lossyBase,
+			coordinateProfile: "nearest-f32-compiled-v1",
+			...(operation === "start_workspace_population_medians"
+				? { populationId: "saved-low-a", channels: ["model-B"] }
+				: {}),
+		};
+		const response = await mcpClient.callTool({ name: operation, arguments: args });
+		assert.notEqual(response.isError, true, JSON.stringify(response));
+		const job = JSON.parse(response.content.find((part) => part.type === "text").text);
+		const deadline = Date.now() + 20_000;
+		let completed;
+		do {
+			completed = await call("get_job", { jobId: job.jobId });
+			if (["succeeded", "failed", "cancelled"].includes(completed.state)) break;
+			if (Date.now() > deadline) throw new Error("Opt-in coordinate analysis did not finish");
+			await delay(10);
+		} while (completed.state === "queued" || completed.state === "running");
+		assert.equal(completed.state, "succeeded", JSON.stringify(completed));
+		const receipt = await call("get_receipt", { jobId: job.jobId });
+		assert.equal(receipt.buildId, capabilities.buildId);
+		assert.equal(receipt.coordinateCompilation.profile, "nearest-f32-compiled-v1");
+		assert.equal(receipt.coordinateCompilation.semantics, "new-compiled-recipe");
+		assert.equal(receipt.coordinateCompilation.lossy, true);
+		assert.equal(receipt.coordinateCompilation.gates[0].originalGeometry.max[0], 9.8);
+		assert.equal(receipt.coordinateCompilation.gates[0].compiledGeometry.max[0], Math.fround(9.8));
+		assert.equal(receipt.coordinateCompilation.gates[0].deltas.max[0], Math.fround(9.8) - 9.8);
+		assert.equal(receipt.workspace.document.sha256, lossyBase.expectedSha256);
+		const artifact = JSON.parse(await readFile(join(root, completed.result.path), "utf8"));
+		assert.deepEqual(artifact.coordinateCompilation, receipt.coordinateCompilation);
+		if (operation === "start_workspace_gate_counts")
+			assert.equal(receipt.summary.counts[0].count, 2);
+		else {
+			assert.deepEqual(receipt.summary.lower, [0]);
+			assert.deepEqual(receipt.summary.upper, [20]);
+		}
+	}
+	assert.equal(await readFile(join(root, "lossy.flowatlas.json"), "utf8"), lossyText);
 	console.log(
 		JSON.stringify({
 			result: "passed",
@@ -508,6 +564,7 @@ try {
 			apiVersion: capabilities.version,
 			nodeVersion: process.version,
 			acceptedEndpoints: ["/rpc", "/mcp"],
+			acceptedCoordinateProfile: "nearest-f32-compiled-v1",
 			check:
 				"built Node studio: FCS processing, single/batch statistics and read-only workspace-bound analysis",
 			inputHash: sample.sha256,

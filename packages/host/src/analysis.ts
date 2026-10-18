@@ -48,6 +48,7 @@ import {
 	resolveControls,
 	runControlEstimation,
 } from "./control-estimation.js";
+import type { CoordinateCompilationReport } from "./coordinate-compilation.js";
 import {
 	type GateCountResult,
 	type ResolvedGateCounts,
@@ -143,6 +144,7 @@ interface Job {
 		binding: WorkspaceBinding;
 		analysisRecipeHash: string;
 		recipeHash: string;
+		coordinateCompilation?: CoordinateCompilationReport;
 	};
 	controlEvidence?: PopulationResult[];
 	controlCandidate?: Pick<ControlResult, "channels" | "matrix" | "estimationDiagnostics">;
@@ -323,6 +325,7 @@ class FcsAnalysis implements AnalysisService {
 					limits: {
 						maxWorkspaceDocumentBytes: 1024 * 1024,
 						maxWorkspaceBindingBytes: 32 * 1024,
+						maxCoordinateCompilationReportBytes: 64 * 1024,
 						maxBatchMedianSamples: 32,
 						maxBatchMedianRows: 512,
 						maxPopulationMedianChannels: 32,
@@ -671,6 +674,9 @@ class FcsAnalysis implements AnalysisService {
 					request: plan.request,
 					binding: plan.workspace,
 					analysisRecipeHash: plan.analysis.recipeHash,
+					...(plan.coordinateCompilation
+						? { coordinateCompilation: plan.coordinateCompilation }
+						: {}),
 					recipeHash: digest({
 						operation,
 						workspace: plan.workspace,
@@ -1635,6 +1641,9 @@ class FcsAnalysis implements AnalysisService {
 					workspace: workspace.binding,
 					compiledRecipe: resolved.request,
 					analysisRecipeHash: workspace.analysisRecipeHash,
+					...(workspace.coordinateCompilation
+						? { coordinateCompilation: workspace.coordinateCompilation }
+						: {}),
 				}
 			: {};
 		const operation =

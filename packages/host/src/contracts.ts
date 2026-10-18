@@ -112,6 +112,12 @@ const workspaceAnalysis = {
 	...workspaceIdentity,
 	sampleId: documentId,
 	coordinateSpace: z.literal("stored-f32"),
+	coordinateProfile: z
+		.enum(["strict-f32-v1", "nearest-f32-compiled-v1"])
+		.describe(
+			"Omitted or strict-f32-v1 preserves strict admission. nearest-f32-compiled-v1 explicitly creates a potentially lossy new gate recipe; membership/topology preservation is not guaranteed.",
+		)
+		.optional(),
 	startEvent: index.optional(),
 	eventCount: index.optional(),
 };
