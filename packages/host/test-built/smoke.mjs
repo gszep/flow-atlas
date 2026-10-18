@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { mkdtemp, open, readFile, rm } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -357,11 +357,89 @@ try {
 	);
 	assert.deepEqual(batchMedianArtifact.recipe, batchMedianReceipt.recipe);
 	assert.deepEqual(batchMedianArtifact.summary, batchMedianReceipt.summary);
+	const workspaceText = `${JSON.stringify(
+		{
+			schemaVersion: 1,
+			id: "saved-demo",
+			revision: 3,
+			samples: [
+				{
+					id: "doc-sample",
+					file: { sha256: sample.sampleId, basename: "input.fcs", size: sample.bytes },
+					channels: [
+						{ id: "model-A", name: "A" },
+						{ id: "model-B", name: "B", transform: { type: "log", offset: 1, decades: 4 } },
+					],
+				},
+			],
+			gates: [
+				{
+					id: "saved-low-a",
+					sampleId: "doc-sample",
+					name: "Low A",
+					parentId: null,
+					dimensions: ["model-A"],
+					geometry: { type: "rectangle", min: [null], max: [5] },
+					author: "UI user",
+					modified: "2026-10-18T00:00:00Z",
+				},
+			],
+			groups: [],
+			annotations: [],
+		},
+		null,
+		2,
+	)}\n`;
+	await writeFile(join(root, "workspace.flowatlas.json"), workspaceText);
+	const workspaceSha = createHash("sha256").update(workspaceText).digest("hex");
+	const inspected = await call("inspect_workspace", { path: "workspace.flowatlas.json" });
+	assert.equal(inspected.document.sha256, workspaceSha);
+	assert.equal(inspected.document.revision, 3);
+	assert.equal(inspected.items[0].id, "doc-sample");
+	const workspaceBase = {
+		path: "workspace.flowatlas.json",
+		expectedRevision: 3,
+		expectedSha256: workspaceSha,
+		sampleId: "doc-sample",
+		coordinateSpace: "stored-f32",
+	};
+	for (const operation of ["start_workspace_gate_counts", "start_workspace_population_medians"]) {
+		const args =
+			operation === "start_workspace_gate_counts"
+				? workspaceBase
+				: { ...workspaceBase, populationId: "saved-low-a", channels: ["model-B"] };
+		const scopedJob = await call(operation, args);
+		const deadline = Date.now() + 20_000;
+		let scopedStatus;
+		do {
+			scopedStatus = await call("get_job", { jobId: scopedJob.jobId });
+			if (["succeeded", "failed", "cancelled"].includes(scopedStatus.state)) break;
+			if (Date.now() > deadline) throw new Error("Workspace analysis did not finish");
+			await delay(10);
+		} while (scopedStatus.state === "queued" || scopedStatus.state === "running");
+		assert.equal(scopedStatus.state, "succeeded", JSON.stringify(scopedStatus));
+		const scopedReceipt = await call("get_receipt", { jobId: scopedJob.jobId });
+		assert.equal(scopedReceipt.workspace.document.sha256, workspaceSha);
+		assert.equal(scopedReceipt.workspace.document.revision, 3);
+		assert.equal(scopedReceipt.workspace.sample.id, "doc-sample");
+		assert.equal(scopedReceipt.compiledRecipe.sampleId, sample.sampleId);
+		assert.deepEqual(scopedReceipt.compiledRecipe.gates[0].dimensions, ["A"]);
+		assert.equal(scopedReceipt.workspace.displayTransformsApplied, false);
+		assert.equal(scopedReceipt.compiledRecipe.gates[0].author, undefined);
+		if (operation === "start_workspace_gate_counts")
+			assert.equal(scopedReceipt.summary.counts[0].count, 1);
+		else {
+			assert.deepEqual(scopedReceipt.summary.channels, ["B"]);
+			assert.deepEqual(scopedReceipt.summary.lower, [20]);
+			assert.deepEqual(scopedReceipt.summary.upper, [20]);
+		}
+	}
+	assert.equal(await readFile(join(root, "workspace.flowatlas.json"), "utf8"), workspaceText);
 	console.log(
 		JSON.stringify({
 			result: "passed",
 			check:
-				"built Node studio: compensation, acquisition/OLS, control estimation, single/batch counts and median ranks",
+				"built Node studio: FCS processing, single/batch statistics and read-only workspace-bound analysis",
 			inputHash: sample.sha256,
 			outputHash: status.result.sha256,
 		}),

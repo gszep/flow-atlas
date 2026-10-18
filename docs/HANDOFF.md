@@ -1,5 +1,19 @@
 # Handoff
 
+## Read-only workspace analysis (2026-10-18)
+
+`inspect_workspace` exposes bounded model-v1 JSON metadata pages. Workspace count
+and median jobs bind expected document revision plus raw-byte SHA-256, resolve
+model sample/channel IDs to already-imported FCS artifacts, and capture an admitted
+snapshot. Receipts preserve original workspace arguments, compiled numerical
+arguments, both hashes and the source binding. Workspace bytes/stamps are untouched.
+
+Source review and all 449 local tests passed, including 17 new workspace cases. A
+reproduced abort-plus-document-change race was corrected to preserve cancellation
+while still closing the descriptor. Lint/typecheck, host build and compiled RPC
+smoke pass. Final-head Linux CI is required before merge. Existing stored-F32
+numerical limits remain explicit.
+
 ## Batch median-rank tables (2026-10-18)
 
 `start_batch_population_medians` applies one stored-F32 population/channel recipe

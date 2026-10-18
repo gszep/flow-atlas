@@ -1170,3 +1170,61 @@ sampled combined peak was 858,075,136 bytes. The owned fixture tree was removed
 after process cleanup. Logs/timings are in the approved temporary directory's
 `population-median-benchmark-validation`. These are validation costs, separate
 from the benchmark measurements. Final-head Linux CI remains required for merge.
+
+## 2026-10-18 — Read-only workspace snapshot binding
+
+**Decision:** bridge model-v1 workspace JSON to existing
+one-sample count and median-rank jobs. Inspection returns bounded sample/gate/channel
+pages. Jobs require both the expected revision and raw document-byte SHA-256;
+revision alone cannot detect same-revision manual edits. The 1-MiB document is
+read from a confined regular descriptor, decoded as strict UTF-8, validated by
+the model package, and checked for stability before closing.
+
+Choose admitted-snapshot semantics: capture the verified recipe at admission;
+later workspace edits neither change nor cancel the numerical work. The document
+is not reread during execution. Existing imported FCS artifacts are addressed only
+by the declared sample hash and checked byte size, never by opening the basename.
+Used channel IDs map to exact FCS names; gate identity, dependency structure and
+geometry are preserved. No display transform, rounding, provenance-stamp write,
+model transaction, implicit FCS import or numerical-policy change is introduced.
+
+Workspace request and compiled numerical arguments remain separate in receipts,
+with document/sample binding, inner analysis hash and composite workspace recipe
+hash. Inspection's declared finalization flags describe source gates, not approval
+of numerical results. Existing backend limits may reject broader model-valid
+definitions. Cap requests at 64 KiB, bindings at 32 KiB and pages/receipts at 256 KiB;
+inspection reduces page length rather than truncating identifiers.
+
+**Verified:** independent source review and typecheck passed. Compiled RPC
+smoke resolves model IDs, counts a stamped gate, computes raw-space endpoints on
+a display-transformed channel, checks lineage, and confirms unchanged document
+bytes. All 17 workspace boundary/E2E/lifecycle cases pass.
+
+**Boundary evidence:** five focused tests passed, including an 811,547-byte model
+whose complete long identifiers require byte-budget pagination, pre-read size and
+encoding/schema rejection, path confinement, and a 33,071-byte request whose used
+channel binding alone exceeds 32 KiB. A deterministic abort-plus-mutation test
+initially returned INPUT_CHANGED because cleanup replaced the abort. Cleanup now
+attempts descriptor closure before prioritizing cancellation; non-cancelled
+unstable reads still reject. The original regression assertion remains and passes.
+
+The first final-check batch stopped on `noUnsafeFinally` rather than running the
+full suite. Cleanup was restructured to capture its outcome and decide error
+precedence after stability/closure attempts; no lint rule was disabled. Independent
+review approved the explicit flow and all boundary cases passed again. One E2E
+size-mismatch assertion had also requested counts for a gateless sample; using a
+valid root-median request isolated the intended size check without changing the
+fixture's invalid size or dropping coverage.
+
+**Final measured validation:** all 449 tests in 40 files passed. Lint/typecheck ran
+concurrently (2.311/1.329 s), then independent host build/full tests (1.129/76.713 s),
+followed by compiled RPC smoke (2.573 s). Total batch elapsed 81.601 s; runnable
+queue delay <0.001 s. Vitest reports transform 1.01 s, setup 0 s, import 5.55 s and
+tests 62.06 s. Existing isolated dependencies were reused; the final host build was
+reused for smoke and the unchanged UI was excluded. Two check slots, one GPU worker,
+1536-MiB old spaces and 16-MiB semi-spaces ran under 180-s command/90-s stall
+deadlines and a 4-GiB observed process-tree RSS ceiling. No limit terminated work;
+sampled combined peak was 1,068,470,272 bytes, and owned temporary fixtures were
+removed after cleanup. Logs are under the approved temporary directory's
+`workspace-analysis-final-validation-v2`; the failed lint batch remains separately
+under `workspace-analysis-final-validation`. Final-head Linux CI precedes merge.

@@ -9,6 +9,12 @@ import {
 } from "./contracts.js";
 
 export const operationDescriptions: Record<OperationName, string> = {
+	inspect_workspace:
+		"Read a confined model-schema workspace JSON (up to 1 MiB), returning byte hash/revision and byte-bounded sample, gate or channel metadata pages. Optional hash/revision guard keeps pages consistent. No workspace edits or implicit FCS import.",
+	start_workspace_gate_counts:
+		"Count one workspace sample's gates from an admitted document snapshot bound to expected byte hash and revision. Resolves channel IDs to exact names and requires an already-imported FCS artifact. Stored-F32 computation and immutable receipt lineage; no document writes.",
+	start_workspace_population_medians:
+		"Compute median-rank endpoints for one workspace sample/population and target channel IDs, bound to expected document hash/revision. Root uses null populationId. Existing stored-F32 rank policy, admitted-snapshot semantics and already-imported FCS inputs; no workspace edits.",
 	start_batch_population_medians:
 		"Compute per-sample exact median-rank tables for one shared stored-F32 population and channel list across 1–32 distinct immutable samples. At most 512 sample/channel rows. Four passes per source, atomic publication, no pooling/midpoint interpolation; empty or selected-nonfinite sources reject with source diagnostics.",
 	start_population_medians:

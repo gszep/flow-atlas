@@ -106,6 +106,14 @@ source row at 389.461 MiB process lifetime peak RSS. This is one population's
 two-gate dependency closure, not full-128-gate or cohort throughput; qualifications
 and reproduction are in `docs/reference/population-median-scalability.md`.
 
+The current bounded milestone binds saved model workspaces to existing analysis:
+read-only paged inspection and one-sample count/rank jobs guarded by revision and
+document-byte hash. It captures the admitted recipe, maps declared channel IDs to
+exact FCS names and retains lineage without modifying workspace definitions or
+introducing a new numerical convention. Independent review and all 449 local tests
+passed, including 17 workspace binding/boundary/lifecycle cases, plus host build
+and compiled RPC smoke. Final-head CI precedes merge.
+
 ### Acquisition / spectral wave
 
 `register_unmixing` adds named detector/fluorochrome OLS with optional L2 residual.

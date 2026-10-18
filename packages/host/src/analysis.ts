@@ -69,6 +69,14 @@ import {
 	resolveContext,
 	type SpectralDefinition,
 } from "./processing.js";
+import {
+	inspectWorkspaceFile,
+	resolveWorkspaceCounts,
+	resolveWorkspaceMedians,
+	type WorkspaceBinding,
+	type WorkspaceCountRequest,
+	type WorkspaceMedianRequest,
+} from "./workspace-analysis.js";
 
 type Metadata = Omit<FcsFile, "data">;
 declare const __FLOW_ATLAS_BUILD_ID__: string;
@@ -109,7 +117,9 @@ interface Job {
 		| "gate-counts"
 		| "batch-gate-counts"
 		| "population-medians"
-		| "batch-population-medians";
+		| "batch-population-medians"
+		| "workspace-gate-counts"
+		| "workspace-population-medians";
 	id: string;
 	state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
 	phase: string;
@@ -127,6 +137,13 @@ interface Job {
 	batchCounts?: ResolvedBatchCounts;
 	populationMedians?: ResolvedPopulationMedians;
 	batchMedians?: ResolvedBatchMedians;
+	workspaceContext?: {
+		operation: "workspace-gate-counts" | "workspace-population-medians";
+		request: WorkspaceCountRequest | WorkspaceMedianRequest;
+		binding: WorkspaceBinding;
+		analysisRecipeHash: string;
+		recipeHash: string;
+	};
 	controlEvidence?: PopulationResult[];
 	controlCandidate?: Pick<ControlResult, "channels" | "matrix" | "estimationDiagnostics">;
 	progressDetail?:
@@ -304,6 +321,8 @@ class FcsAnalysis implements AnalysisService {
 						outputs: "appended fluorochromes and optional L2 residual",
 					},
 					limits: {
+						maxWorkspaceDocumentBytes: 1024 * 1024,
+						maxWorkspaceBindingBytes: 32 * 1024,
 						maxBatchMedianSamples: 32,
 						maxBatchMedianRows: 512,
 						maxPopulationMedianChannels: 32,
@@ -621,6 +640,77 @@ class FcsAnalysis implements AnalysisService {
 					await handle.close();
 				}
 			}
+			case "inspect_workspace":
+				return inspectWorkspaceFile(
+					this.store,
+					operationSchemas.inspect_workspace.parse(input),
+					signal,
+				);
+			case "start_workspace_gate_counts":
+			case "start_workspace_population_medians": {
+				const counts = name === "start_workspace_gate_counts";
+				const plan = counts
+					? await resolveWorkspaceCounts(
+							this.store,
+							operationSchemas.start_workspace_gate_counts.parse(input),
+							(id) => this.sample(id, signal),
+							signal,
+						)
+					: await resolveWorkspaceMedians(
+							this.store,
+							operationSchemas.start_workspace_population_medians.parse(input),
+							(id) => this.sample(id, signal),
+							signal,
+						);
+				signal.throwIfAborted();
+				if (this.queue.length + this.pendingJobs >= 16)
+					throw new AnalysisError("QUEUE_FULL", "Analysis queue is full");
+				const operation = counts ? "workspace-gate-counts" : "workspace-population-medians";
+				const workspaceContext: NonNullable<Job["workspaceContext"]> = {
+					operation,
+					request: plan.request,
+					binding: plan.workspace,
+					analysisRecipeHash: plan.analysis.recipeHash,
+					recipeHash: digest({
+						operation,
+						workspace: plan.workspace,
+						analysisRecipeHash: plan.analysis.recipeHash,
+					}),
+				};
+				const job: Job = {
+					kind: operation,
+					id: randomUUID(),
+					state: "queued",
+					phase: "queued",
+					processedEvents: 0,
+					totalEvents: counts
+						? (plan.analysis as ResolvedGateCounts).eventCount
+						: (plan.analysis as ResolvedPopulationMedians).totalEventVisits,
+					createdAt: new Date().toISOString(),
+					enqueuedAt: performance.now(),
+					request: { sampleId: plan.analysis.request.sampleId },
+					inputContext: { inputSpace: "stored" },
+					workspaceContext,
+					...(counts
+						? { gateCounts: plan.analysis as ResolvedGateCounts }
+						: { populationMedians: plan.analysis as ResolvedPopulationMedians }),
+					abort: new AbortController(),
+				};
+				this.pendingJobs++;
+				try {
+					await this.store.saveRun(job.id, { ...this.jobRecord(job), workspaceContext });
+					signal.throwIfAborted();
+					this.jobs.set(job.id, job);
+					this.queue.push(job);
+					queueMicrotask(() => this.pump());
+					return this.jobRecord(job);
+				} catch (error) {
+					await rm(join(this.store.runs, `${job.id}.json`), { force: true });
+					throw error;
+				} finally {
+					this.pendingJobs--;
+				}
+			}
 			case "start_batch_gate_counts": {
 				const request = operationSchemas.start_batch_gate_counts.parse(input);
 				const resolved = await resolveBatchCounts(request, (id) => this.sample(id, signal), signal);
@@ -867,6 +957,7 @@ class FcsAnalysis implements AnalysisService {
 					batchCounts: _batchCounts,
 					populationMedians: _populationMedians,
 					batchMedians: _batchMedians,
+					workspaceContext: _workspaceContext,
 					...status
 				} = record;
 				return {
@@ -1441,6 +1532,7 @@ class FcsAnalysis implements AnalysisService {
 			createdAt: job.createdAt,
 			completedAt: job.completedAt,
 			request:
+				job.workspaceContext?.request ??
 				job.batchMedians?.request ??
 				job.populationMedians?.request ??
 				job.batchCounts?.request ??
@@ -1448,6 +1540,7 @@ class FcsAnalysis implements AnalysisService {
 				job.estimation?.request ??
 				job.request,
 			inputContext: job.inputContext,
+			...(job.workspaceContext ? { workspace: job.workspaceContext.binding } : {}),
 			error: job.error,
 			warnings: job.warnings,
 			result: job.state === "succeeded" ? job.result : undefined,
@@ -1472,6 +1565,8 @@ class FcsAnalysis implements AnalysisService {
 					"batch-gate-counts",
 					"population-medians",
 					"batch-population-medians",
+					"workspace-gate-counts",
+					"workspace-population-medians",
 					"control-estimation",
 				].includes(value.operation as string)
 					? value.operation
@@ -1479,7 +1574,8 @@ class FcsAnalysis implements AnalysisService {
 				progressUnit:
 					value.operation === "control-estimation" ||
 					value.operation === "population-medians" ||
-					value.operation === "batch-population-medians"
+					value.operation === "batch-population-medians" ||
+					value.operation === "workspace-population-medians"
 						? "event-visits"
 						: "events",
 				state: "succeeded",
@@ -1487,6 +1583,7 @@ class FcsAnalysis implements AnalysisService {
 				result: value.output,
 				request: value.recipe,
 				inputContext: value.inputContext,
+				...(value.workspace ? { workspace: value.workspace } : {}),
 				processedEvents: value.eventCount ?? value.eventVisits,
 				totalEvents: value.eventCount ?? value.eventVisits,
 				receipt,
@@ -1530,13 +1627,25 @@ class FcsAnalysis implements AnalysisService {
 		const rankJob = !!(medians || batchMedians);
 		const batchSources = batchMedians?.request.samples ?? batch?.request.samples;
 		const resolved = batchMedians ?? medians ?? batch ?? (job.gateCounts as ResolvedGateCounts);
-		const operation = batchMedians
-			? "batch-population-medians"
-			: medians
-				? "population-medians"
-				: batch
-					? "batch-gate-counts"
-					: "gate-counts";
+		const workspace = job.workspaceContext;
+		const recipe = workspace?.request ?? resolved.request;
+		const recipeHash = workspace?.recipeHash ?? resolved.recipeHash;
+		const lineage = workspace
+			? {
+					workspace: workspace.binding,
+					compiledRecipe: resolved.request,
+					analysisRecipeHash: workspace.analysisRecipeHash,
+				}
+			: {};
+		const operation =
+			workspace?.operation ??
+			(batchMedians
+				? "batch-population-medians"
+				: medians
+					? "population-medians"
+					: batch
+						? "batch-gate-counts"
+						: "gate-counts");
 		const outputName = rankJob ? "medians.json" : "counts.json";
 		const signal = job.abort.signal;
 		const staging = join(this.store.temporary, job.id),
@@ -1618,10 +1727,11 @@ class FcsAnalysis implements AnalysisService {
 			const artifact = {
 				schemaVersion: 1,
 				jobId: job.id,
-				...(rankJob || batch
-					? { recipe: resolved.request }
+				...(workspace || rankJob || batch
+					? { recipe }
 					: { sampleId: job.gateCounts?.request.sampleId }),
-				recipeHash: resolved.recipeHash,
+				recipeHash,
+				...lineage,
 				summary,
 			};
 			const encoded = Buffer.from(`${boundedJson(artifact, 256 * 1024)}\n`);
@@ -1647,8 +1757,9 @@ class FcsAnalysis implements AnalysisService {
 						}
 					: { sha256: medians?.request.sampleId ?? job.gateCounts?.request.sampleId },
 				inputContext: job.inputContext,
-				recipe: resolved.request,
-				recipeHash: resolved.recipeHash,
+				recipe,
+				recipeHash,
+				...lineage,
 				summary,
 				output: job.result,
 				...(rankJob
@@ -1691,8 +1802,9 @@ class FcsAnalysis implements AnalysisService {
 				state: outcome,
 				hostInstanceId: this.instanceId,
 				buildId,
-				recipe: resolved.request,
-				recipeHash: resolved.recipeHash,
+				recipe,
+				recipeHash,
+				...lineage,
 				inputContext: job.inputContext,
 				error: job.error,
 				processedEvents: job.processedEvents,

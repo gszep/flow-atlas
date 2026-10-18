@@ -413,6 +413,65 @@ the 256 KiB response-budget check. Standard job, cancellation and restart-observ
 operations apply. Compact persisted bindings avoid repeating large gate plans per
 sample. No workspace definitions or human-finalization stamps are changed.
 
+## Read-only workspace-bound analysis
+
+`inspect_workspace` reads the repository's `@flow-atlas/model` v1 JSON format from
+a workspace-relative path. Documents are capped at 1 MiB and decoded as strict
+UTF-8. The response includes `document: {path, id, revision, sha256, bytes}`; the
+SHA-256 identifies **raw file bytes**, so even a same-revision manual edit is visible.
+
+Inspection views are `samples` (default), `gates` and `channels`. Supply `sampleId`
+to filter gates or to select a channel page; it is required for channels and is
+not accepted for the samples view. Pages use `offset` and `limit` (1–100), and may
+return fewer items to stay within 256 KiB. Continue from `nextOffset`; IDs are never
+truncated. Optional `expectedRevision` and `expectedSha256` keep subsequent pages
+bound to the same document. Gate pages report declared `humanFinalized` metadata;
+channel pages preserve display-transform declarations.
+
+`start_workspace_gate_counts` evaluates all gates belonging to one **model sample
+ID**. `start_workspace_population_medians` additionally accepts a model gate ID
+(or null for root) and a `channels` list of **model channel IDs**. Both require
+the inspected revision/hash and explicit `coordinateSpace: "stored-f32"`:
+
+```json
+{
+  "path": "workspace.flowatlas.json",
+  "expectedRevision": 7,
+  "expectedSha256": "<document byte SHA-256 from inspection>",
+  "sampleId": "<model sample ID>",
+  "coordinateSpace": "stored-f32"
+}
+```
+
+For median ranks, add `populationId` and `channels`; optional event windows use
+`startEvent`/`eventCount` as in the underlying tools. The adapter looks up only the
+declared `sample.file.sha256` in managed imported FCS artifacts and checks its byte
+size. A basename in the document does not import or open an FCS file implicitly.
+Import the data explicitly before submitting analysis.
+
+Used model channel IDs map to exact, unambiguous FCS parameter names. Gate IDs,
+parent/Boolean references and raw geometry are preserved. Display transforms are
+recorded as unapplied; coordinates are not rounded. Existing profile limits still
+apply, so a model-valid definition can be unsupported for computation—for example,
+a rectangle with more than two dimensions or non-exact-F32 bounds.
+
+These are **admitted-snapshot jobs**. The adapter checks document hash/revision
+while capturing the request, then executes the captured numerical recipe without
+rereading the document. Subsequent edits do not change or cancel that computation.
+Results describe the captured version; inspection provides the current binding
+when a client needs to determine whether it is still current.
+
+Receipts/artifacts retain the workspace request as `recipe`, the mapped legacy
+arguments as `compiledRecipe`, and a `workspace` binding containing document and
+sample identities plus channel-ID/name mappings. `analysisRecipeHash` identifies
+the underlying numerical recipe; `recipeHash` also binds its workspace context.
+The compiled recipe can be resubmitted to the underlying count/rank tool. Requests
+are capped at 64 KiB and bindings at 32 KiB; publication retains the 256 KiB limit.
+
+The source document and its provenance stamps remain byte-for-byte unchanged by
+inspection or analysis. Numerical outputs do not acquire human-finalization
+stamps. These operations add no workspace editing, transaction or journal endpoint.
+
 ## Numerical and artifact contracts
 
 - FCS list-mode 2.0/3.0/3.1 input, strict UTF-8 TEXT, and F/I/D decoding to F32.
