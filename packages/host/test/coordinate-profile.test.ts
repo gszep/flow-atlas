@@ -499,9 +499,9 @@ describe("explicit F32 coordinate profiles through workspace analyses", () => {
 		expect(summary.counts[0]).toMatchObject({ id: "g-poly", count: 2, parentCount: 2 });
 	});
 
-	it("leaves event values untouched under opt-in medians over subnormal and signed-zero data", async () => {
+	it("preserves selected subnormal rank endpoints and agrees with strict medians", async () => {
 		const { root, service, identity } = await context();
-		// Gate axis PE uses normal coordinates only; targets include -0 and subnormals.
+		// Gate bounds are zero/unbounded; PE event data include -0 and subnormals.
 		const optIn = await terminal(
 			service,
 			(
@@ -533,7 +533,8 @@ describe("explicit F32 coordinate profiles through workspace analyses", () => {
 			max: [null],
 		});
 		// Canonical order 0, 2^-149, 2^-148, 5: even count ranks 1/2 are the two subnormals.
-		// Any event modification (flushing, averaging) would change these exact endpoints.
+		// Flushing these selected subnormals or averaging the endpoints would change the result.
+		// This does not establish bitwise preservation of every event or the sign of zero.
 		expect(optInReceipt.summary).toMatchObject({
 			populationId: "g-nonneg",
 			coordinateSpace: "stored-f32",
@@ -544,7 +545,7 @@ describe("explicit F32 coordinate profiles through workspace analyses", () => {
 			ranks: { indexBase: 0, lower: 1, upper: 2 },
 		});
 		// The strict profile over the identical recipe produces identical endpoints and no
-		// report at all: events are unmodified by either path.
+		// report at all; this checks endpoint agreement, not every input event's bits.
 		const strict = await terminal(
 			service,
 			(
