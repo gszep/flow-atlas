@@ -464,10 +464,47 @@ size. A basename in the document does not import or open an FCS file implicitly.
 Import the data explicitly before submitting analysis.
 
 Used model channel IDs map to exact, unambiguous FCS parameter names. Gate IDs,
-parent/Boolean references and raw geometry are preserved. Display transforms are
-recorded as unapplied; coordinates are not rounded. Existing profile limits still
+parent/Boolean references and raw geometry are preserved by default. Display transforms are
+recorded as unapplied. Existing profile limits still
 apply, so a model-valid definition can be unsupported for computation—for example,
 a rectangle with more than two dimensions or non-exact-F32 bounds.
+
+### Explicit nearest-F32 compilation
+
+Workspace count and median jobs optionally accept
+`coordinateProfile: "nearest-f32-compiled-v1"`. Omission or explicit
+`"strict-f32-v1"` retains strict admission. Rejected strict inputs are never
+automatically rounded or retried.
+
+The opt-in profile creates a **new, potentially lossy compiled recipe** by applying
+binary32 round-to-nearest, ties-to-even once to gate coordinates. Event values,
+display transforms, inclusivity, gate identity, parents and Boolean references are
+not changed. Original workspace bytes and coordinates remain preserved. Membership
+and general topology preservation are **not guaranteed**.
+
+The `coordinateCompilation` report records profile/semantics, original and compiled
+canonical-recipe hashes, both geometries, signed coordinate deltas, changed-coordinate
+count and maximum absolute error. The workspace binding includes the report hash,
+so the composite recipe hash distinguishes the opt-in profile. A zero-change report
+has `lossy: false`; it is not silently omitted.
+Compiled zero is canonical positive zero. Negative-zero canonicalization counts
+as a change, but JSON geometry and canonical hashes erase the zero sign; hashes
+can therefore match even with `lossy: true`. Original workspace bytes retain the
+source representation. The report is numeric JSON provenance, not a bit-exact
+archive of the source geometry's number tokens.
+
+Compilation rejects nonfinite/overflowed coordinates, nonzero-to-zero underflow,
+unsupported compiled subnormals, existing profile-limit violations and detected
+conversion-induced collapse. Limited structural checks cover collapsed rectangle
+spans, polygon bounding spans, lost distinct vertices and new collinearity. Zero
+signed polygon area alone is not a collapse test. The compiler does not certify
+general self-intersection/topology preservation and does not repair or clamp input.
+Compilation reports are capped at 64 KiB and are never truncated.
+
+In the decision study, tiny changes altered inclusive-boundary membership, polygon
+ties and nested Boolean denominators. The opt-in tests retain these changes as
+expected new semantics. A small reference subset with no observed differences was
+not evidence of equivalence or FlowJo parity.
 
 These are **admitted-snapshot jobs**. The adapter checks document hash/revision
 while capturing the request, then executes the captured numerical recipe without

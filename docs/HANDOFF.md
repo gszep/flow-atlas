@@ -1,5 +1,24 @@
 # Handoff
 
+## Explicit nearest-F32 compiled recipe (2026-10-19)
+
+Workspace count and median jobs now accept explicit
+`coordinateProfile: "nearest-f32-compiled-v1"`; omitted or `strict-f32-v1` remains
+strict. Receipts/artifacts retain a bounded original/compiled geometry report with
+canonical recipe hashes and signed deltas, bound through the workspace report
+digest. Source documents remain unchanged. This is a new potentially lossy recipe,
+not a membership/topology-preserving conversion or FlowJo-parity claim.
+
+The compiler rejects numeric hazards and detected introduced collapse; exact
+dyadic metadata collinearity avoids signed-area heuristics. Synthetic tests retain
+membership/denominator changes. The prior decision study's 13-minute/132-MiB receipt
+is retained separately; its small no-change reference subset proves no equivalence.
+The compiled smoke exercises strict rejection, explicit count/median opt-in and
+original/compiled geometry through MCP/RPC. Independent focused source review,
+lint/typecheck and candidate compiled acceptance passed. Local validation passed
+474 tests in the required suite plus seven new dedicated runtime cases (481 total).
+Exact-head CI and merged acceptance evidence belongs in the delivery receipt/PR.
+
 ## Workspace group discovery (2026-10-19)
 
 The inspector now has metadata-only `groups` and `group-samples` views, preserving

@@ -10,14 +10,19 @@ import {
 	type Sample,
 	type WorkspaceDocument,
 } from "@flow-atlas/model";
-import { type ArtifactStore, canonical, fileSource } from "./artifact-store.js";
+import { type ArtifactStore, canonical, digest, fileSource } from "./artifact-store.js";
 import { AnalysisError, boundedJson, type OperationArgs, validateOperation } from "./contracts.js";
+import { type CoordinateCompilationReport, compileNearestF32 } from "./coordinate-compilation.js";
 import {
 	type GateCountRequest,
 	type ResolvedGateCounts,
 	resolveGateCounts,
 } from "./gate-counts.js";
-import { type ResolvedPopulationMedians, resolvePopulationMedians } from "./population-medians.js";
+import {
+	type PopulationMedianRequest,
+	type ResolvedPopulationMedians,
+	resolvePopulationMedians,
+} from "./population-medians.js";
 
 export type WorkspaceCountRequest = OperationArgs<"start_workspace_gate_counts">;
 export type WorkspaceMedianRequest = OperationArgs<"start_workspace_population_medians">;
@@ -41,16 +46,24 @@ export interface WorkspaceBinding {
 	channels: Array<{ id: string; name: string }>;
 	coordinateSpace: "stored-f32";
 	displayTransformsApplied: false;
+	coordinateCompilation?: {
+		profile: "nearest-f32-compiled-v1";
+		reportSha256: string;
+		semantics: "new-compiled-recipe";
+		lossy: boolean;
+	};
 }
 export interface ResolvedWorkspaceCounts {
 	request: WorkspaceCountRequest;
 	analysis: ResolvedGateCounts;
 	workspace: WorkspaceBinding;
+	coordinateCompilation?: CoordinateCompilationReport;
 }
 export interface ResolvedWorkspaceMedians {
 	request: WorkspaceMedianRequest;
 	analysis: ResolvedPopulationMedians;
 	workspace: WorkspaceBinding;
+	coordinateCompilation?: CoordinateCompilationReport;
 }
 type InspectionItem =
 	| { id: string; file: Sample["file"]; channelCount: number; gateCount: number }
@@ -286,6 +299,7 @@ function workspaceBinding(
 	document: DocumentIdentity,
 	sample: Sample,
 	channels: Array<{ id: string; name: string }>,
+	compilation?: CoordinateCompilationReport,
 ): WorkspaceBinding {
 	const binding: WorkspaceBinding = {
 		profile: "workspace-stored-f32-admitted-snapshot-v1",
@@ -295,6 +309,16 @@ function workspaceBinding(
 		channels,
 		coordinateSpace: "stored-f32",
 		displayTransformsApplied: false,
+		...(compilation
+			? {
+					coordinateCompilation: {
+						profile: compilation.profile,
+						reportSha256: digest(compilation),
+						semantics: compilation.semantics,
+						lossy: compilation.lossy,
+					},
+				}
+			: {}),
 	};
 	if (Buffer.byteLength(canonical(binding)) > 32 * 1024)
 		throw new AnalysisError(
@@ -319,19 +343,31 @@ export async function resolveWorkspaceCounts(
 		throw new AnalysisError("WORKSPACE_NO_GATES", "Selected workspace sample has no gates");
 	const source = await importedSample(sample, getSample, signal);
 	const mapping = channelMapper(sample, source.metadata);
-	const analysis = resolveGateCounts(
-		{
-			sampleId: sample.file.sha256,
-			coordinateSpace: "stored-f32",
-			gates: definitions.map((gate) => projectGate(gate, mapping.name)),
-			...(request.startEvent === undefined ? {} : { startEvent: request.startEvent }),
-			...(request.eventCount === undefined ? {} : { eventCount: request.eventCount }),
-		},
-		source.metadata,
+	const projected: GateCountRequest = {
+		sampleId: sample.file.sha256,
+		coordinateSpace: "stored-f32",
+		gates: definitions.map((gate) => projectGate(gate, mapping.name)),
+		...(request.startEvent === undefined ? {} : { startEvent: request.startEvent }),
+		...(request.eventCount === undefined ? {} : { eventCount: request.eventCount }),
+	};
+	const compilation =
+		request.coordinateProfile === "nearest-f32-compiled-v1"
+			? compileNearestF32(projected)
+			: undefined;
+	const analysis = resolveGateCounts(compilation?.compiled ?? projected, source.metadata);
+	const workspace = workspaceBinding(
+		document,
+		sample,
+		[...mapping.used.values()],
+		compilation?.report,
 	);
-	const workspace = workspaceBinding(document, sample, [...mapping.used.values()]);
 	signal?.throwIfAborted();
-	return freeze({ request, analysis, workspace });
+	return freeze({
+		request,
+		analysis,
+		workspace,
+		...(compilation ? { coordinateCompilation: compilation.report } : {}),
+	});
 }
 
 export async function resolveWorkspaceMedians(
@@ -362,21 +398,33 @@ export async function resolveWorkspaceMedians(
 	const mapping = channelMapper(sample, source.metadata);
 	const gates = definitions.map((gate) => projectGate(gate, mapping.name));
 	const channels = request.channels.map(mapping.name);
-	const analysis = resolvePopulationMedians(
-		{
-			sampleId: sample.file.sha256,
-			coordinateSpace: "stored-f32",
-			populationId: request.populationId,
-			gates,
-			channels,
-			...(request.startEvent === undefined ? {} : { startEvent: request.startEvent }),
-			...(request.eventCount === undefined ? {} : { eventCount: request.eventCount }),
-		},
-		source.metadata,
+	const projected: PopulationMedianRequest = {
+		sampleId: sample.file.sha256,
+		coordinateSpace: "stored-f32",
+		populationId: request.populationId,
+		gates,
+		channels,
+		...(request.startEvent === undefined ? {} : { startEvent: request.startEvent }),
+		...(request.eventCount === undefined ? {} : { eventCount: request.eventCount }),
+	};
+	const compilation =
+		request.coordinateProfile === "nearest-f32-compiled-v1"
+			? compileNearestF32(projected)
+			: undefined;
+	const analysis = resolvePopulationMedians(compilation?.compiled ?? projected, source.metadata);
+	const workspace = workspaceBinding(
+		document,
+		sample,
+		[...mapping.used.values()],
+		compilation?.report,
 	);
-	const workspace = workspaceBinding(document, sample, [...mapping.used.values()]);
 	signal?.throwIfAborted();
-	return freeze({ request, analysis, workspace });
+	return freeze({
+		request,
+		analysis,
+		workspace,
+		...(compilation ? { coordinateCompilation: compilation.report } : {}),
+	});
 }
 
 /** Read-only summaries, with byte-budget pagination; IDs are never truncated. */

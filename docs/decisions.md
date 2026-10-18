@@ -1313,3 +1313,45 @@ The served candidate fingerprint was
 `ed1171bde21b5029e93888f3a34c35a010080d128896cc1062083c785bbaa660`.
 Final-head CI and merged-revision acceptance still gate delivery; no benchmark or
 external-orchestrator work was started.
+
+## 2026-10-19 — Explicit nearest-F32 compiled workspace recipes
+
+**Decision (authorized, implemented; delivery checks pending):** only workspace
+count and median operations accept `nearest-f32-compiled-v1` as an explicit opt-in.
+Omission and `strict-f32-v1` retain strict admission. Compilation creates a new,
+potentially lossy recipe; it never retries rejected input automatically. Source
+workspace bytes/provenance remain unchanged. Geometry, signed deltas, profile,
+original/compiled canonical recipe hashes and maximum displacement are recorded
+in a capped report bound into the workspace receipt. Events, inclusive rectangle
+definitions, strict-ray polygon rules, parents and Boolean references are retained.
+
+Reject nonfinite/overflow, nonzero-to-zero underflow, unsupported compiled
+subnormals, existing geometry-limit violations and detected conversion-induced
+collapse. Structural checks cover zero spans, lost distinct polygon vertices and
+new collinearity using exact dyadic metadata arithmetic. Signed area alone cannot
+prove collapse (a bowtie can have zero signed area and nonempty membership).
+General topology preservation, GPU-vs-JS equivalence and vendor parity remain
+**unverified**, explicitly not promised. Existing kernels are reused.
+
+**Measured decision-support evidence:** the retained CPU study took approximately
+13 minutes with 132 MiB peak RSS. Nine of 14 evaluated synthetic cases changed
+membership (15 candidates, overflow not evaluated); inclusive ties, thin-polygon
+collapse and parent/Boolean denominator changes are intentional regression cases
+for the new semantics. In one existing sample, 768/134426 events in three fixed
+windows showed no change across 33 gates, despite maximum coordinate displacement
+0.003764 raw units. This 0.5713% nonrandom subset is not an equivalence or no-effect
+proof. Private study receipt: `flow-atlas-f32-decision-study/assessment.json`.
+No new dataset, expanded coordinate-comparison study, benchmark or external host
+is required. Existing oracle tests remain part of the repository-required suite;
+their results do not establish equivalence for this new profile.
+
+**Measured implementation validation:** 18 compiler regressions passed within the
+474-test required suite (42 files, 80.66 s wall; Vitest setup 0 s, transform 1.23 s,
+import 6.68 s, execution 64.15 s; maximum process RSS 555,003,904 bytes). Seven
+additional focused GPU/runtime cases passed, retaining changed parent/child/NOT
+counts, polygon ties, exact median endpoints, rejection, source immutability and
+MCP/restart receipt lineage (481 local tests total). Lint/typecheck and host build
+passed. Compiled MCP submission/RPC observation accepted the explicit lossy count
+and median profile. Checks used bounded low-priority local workers; no benchmark
+or external host. Independent numerical/source review found no outstanding issues.
+Final-head CI and merged-source served acceptance are recorded with delivery.
