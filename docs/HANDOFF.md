@@ -1,5 +1,15 @@
 # Handoff
 
+## Workspace group discovery (2026-10-19)
+
+The inspector now has metadata-only `groups` and `group-samples` views, preserving
+declared member order, logical IDs and existing response shapes. Source review,
+lint/typecheck and all 456 local tests pass, including seven CPU-only group cases.
+The no-compute assertion is mandatory, not best-effort. Final validation used one
+low-priority worker with a 2-GiB observed RSS ceiling; compiled acceptance exercised
+group pages over RPC/MCP. Final-head CI and merged-source acceptance remain before
+delivery. No Artemis or external-orchestrator work was involved.
+
 ## Local delivery acceptance
 
 `docs/DELIVERY.md` defines the applicable source-built local studio surface and

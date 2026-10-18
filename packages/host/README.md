@@ -424,13 +424,23 @@ a workspace-relative path. Documents are capped at 1 MiB and decoded as strict
 UTF-8. The response includes `document: {path, id, revision, sha256, bytes}`; the
 SHA-256 identifies **raw file bytes**, so even a same-revision manual edit is visible.
 
-Inspection views are `samples` (default), `gates` and `channels`. Supply `sampleId`
+Inspection views are `samples` (default), `gates`, `channels`, `groups` and
+`group-samples`. Supply `sampleId`
 to filter gates or to select a channel page; it is required for channels and is
 not accepted for the samples view. Pages use `offset` and `limit` (1–100), and may
 return fewer items to stay within 256 KiB. Continue from `nextOffset`; IDs are never
 truncated. Optional `expectedRevision` and `expectedSha256` keep subsequent pages
 bound to the same document. Gate pages report declared `humanFinalized` metadata;
 channel pages preserve display-transform declarations.
+
+`groups` returns `{id, name, sampleCount}` summaries. `group-samples` requires a
+`groupId` and returns the usual sample descriptors in the group's declared member
+order, including each model sample ID and declared FCS file hash. Empty groups
+return an empty page. Distinct model members remain distinct even when they refer
+to the same content hash; discovery does not deduplicate or pool them. The group
+views reject `sampleId`; only `group-samples` accepts `groupId`. Use the same revision/
+hash guards across pages. Membership discovery reads metadata only; FCS artifact
+availability is checked when an analysis job is submitted.
 
 `start_workspace_gate_counts` evaluates all gates belonging to one **model sample
 ID**. `start_workspace_population_medians` additionally accepts a model gate ID

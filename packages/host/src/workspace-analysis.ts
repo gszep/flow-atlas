@@ -4,6 +4,7 @@ import type { FcsFile } from "@flow-atlas/fcs";
 import {
 	type Channel,
 	type Gate,
+	type Group,
 	ModelError,
 	parseWorkspace,
 	type Sample,
@@ -54,6 +55,7 @@ export interface ResolvedWorkspaceMedians {
 type InspectionItem =
 	| { id: string; file: Sample["file"]; channelCount: number; gateCount: number }
 	| { id: string; name: string; transform: NonNullable<Channel["transform"]> | null }
+	| { id: string; name: string; sampleCount: number }
 	| {
 			id: string;
 			name: string;
@@ -69,6 +71,8 @@ export interface WorkspaceInspection {
 	counts: { samples: number; channels: number; gates: number; groups: number; annotations: number };
 	view: InspectRequest["view"];
 	sampleId: string | null;
+	/** Present only for the group views: null for the groups list, the member filter otherwise. */
+	groupId?: string | null;
 	offset: number;
 	total: number;
 	items: InspectionItem[];
@@ -387,8 +391,35 @@ export async function inspectWorkspaceFile(
 		throw new AnalysisError("INVALID_PARAMS", "The samples view does not accept a sampleId filter");
 	if (args.view === "channels" && args.sampleId === undefined)
 		throw new AnalysisError("INVALID_PARAMS", "The channels view requires sampleId");
+	if (args.view === "groups" && (args.sampleId !== undefined || args.groupId !== undefined))
+		throw new AnalysisError(
+			"INVALID_PARAMS",
+			"The groups view accepts neither a sampleId nor a groupId filter",
+		);
+	if (args.view === "group-samples") {
+		if (args.sampleId !== undefined)
+			throw new AnalysisError(
+				"INVALID_PARAMS",
+				"The group-samples view does not accept a sampleId filter",
+			);
+		if (args.groupId === undefined)
+			throw new AnalysisError("INVALID_PARAMS", "The group-samples view requires a groupId");
+	}
+	if (args.view !== "groups" && args.view !== "group-samples" && args.groupId !== undefined)
+		throw new AnalysisError("INVALID_PARAMS", "Only group-samples accepts a groupId filter");
 	const { document, model } = await readWorkspace(store, args, signal);
 	const sample = args.sampleId === undefined ? undefined : selectedSample(model, args.sampleId);
+	const group =
+		args.view === "group-samples"
+			? model.groups.find((candidate) => candidate.id === args.groupId)
+			: undefined;
+	if (args.view === "group-samples" && !group)
+		throw new AnalysisError(
+			"WORKSPACE_GROUP_NOT_FOUND",
+			"Selected workspace group does not exist",
+			{ groupId: args.groupId },
+		);
+	const membersById = group ? new Map(model.samples.map((item) => [item.id, item])) : undefined;
 	const gateCounts = new Map<string, number>();
 	for (const gate of model.gates)
 		gateCounts.set(gate.sampleId, (gateCounts.get(gate.sampleId) ?? 0) + 1);
@@ -400,7 +431,11 @@ export async function inspectWorkspaceFile(
 			? model.samples.length
 			: args.view === "channels"
 				? (sample as Sample).channels.length
-				: definitions.length;
+				: args.view === "groups"
+					? model.groups.length
+					: args.view === "group-samples"
+						? (group as Group).sampleIds.length
+						: definitions.length;
 	const offset = args.offset ?? 0,
 		limit = args.limit ?? 50;
 	const result: WorkspaceInspection = {
@@ -415,6 +450,10 @@ export async function inspectWorkspaceFile(
 		},
 		view: args.view,
 		sampleId: args.sampleId ?? null,
+		// New group views only: null lists every group, a string filters one group's members.
+		// Existing view response shapes stay unchanged (the key is absent).
+		...(args.view === "groups" ? { groupId: null } : {}),
+		...(args.view === "group-samples" ? { groupId: (group as Group).id } : {}),
 		offset,
 		total,
 		items: [],
@@ -427,14 +466,25 @@ export async function inspectWorkspaceFile(
 		},
 	};
 	const itemAt = (index: number): InspectionItem => {
-		if (args.view === "samples") {
-			const item = model.samples[index] as Sample;
+		if (args.view === "samples" || args.view === "group-samples") {
+			// Declared group membership order, not document sample order. Distinct logical
+			// sample IDs sharing one file hash are never deduplicated; the model validator
+			// already rejects repeated IDs within a single group.
+			const item = (
+				args.view === "samples"
+					? model.samples[index]
+					: membersById?.get((group as Group).sampleIds[index] as string)
+			) as Sample;
 			return {
 				id: item.id,
 				file: structuredClone(item.file),
 				channelCount: item.channels.length,
 				gateCount: gateCounts.get(item.id) ?? 0,
 			};
+		}
+		if (args.view === "groups") {
+			const item = model.groups[index] as Group;
+			return { id: item.id, name: item.name, sampleCount: item.sampleIds.length };
 		}
 		if (args.view === "channels") {
 			const item = (sample as Sample).channels[index] as Channel;
