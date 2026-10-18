@@ -1228,3 +1228,46 @@ sampled combined peak was 1,068,470,272 bytes, and owned temporary fixtures were
 removed after cleanup. Logs are under the approved temporary directory's
 `workspace-analysis-final-validation-v2`; the failed lint batch remains separately
 under `workspace-analysis-final-validation`. Final-head Linux CI precedes merge.
+
+## 2026-10-18 — Close local-studio delivery with served-version acceptance
+
+**Decision:** the applicable documented delivery surface is the repository-built
+Node 24 local studio, with MCP/RPC and optional UI assets. The repository has CI
+but no configured cloud or registry release target. `docs/DELIVERY.md` records
+post-merge artifact/endpoint acceptance, scoped operator-instance upgrades and
+rollback. An owned synthetic acceptance process is not reported as a persistent
+operator deployment.
+
+The compiled acceptance script now consumes capabilities over both RPC and MCP,
+checks their build fingerprints agree, and exercises workspace inspection and a
+real workspace count job over MCP alongside the numerical RPC workflow. Successful output records
+the actual served fingerprint, API version, Node version and endpoint paths;
+successful exit/cleanup is also required. No scientific runtime behavior changes.
+
+**Rollback retained:** accepted source `977141c937f644d87938f83784305ed717b1ecea`,
+build `8263d1456e234aa660f421174981638ba1b4db6c5b6b81a1cff70ea0b68a8b6f`,
+with a private bundle archive and manifest under this session's research delivery
+directory. The manifest includes archive/bundle/lockfile hashes; no experiment
+data or tokens were included. Final validation and merged-revision acceptance
+will be recorded with delivery evidence.
+
+**Validation evidence:** an initial full run passed 448 tests but timed out on an
+existing generic deep comparison of a 1-MiB Buffer. Replacing that assertion with
+native `Buffer.equals` retains exact byte/length coverage without raising its
+timeout; the targeted case completed in 62 ms. The failure log is retained.
+Independent review approved the assertion change and the final cross-transport
+checks. The combined rerun passed all 449 tests, lint/typecheck and real compiled
+RPC/MCP acceptance. The served fingerprint was
+`8263d1456e234aa660f421174981638ba1b4db6c5b6b81a1cff70ea0b68a8b6f`.
+
+Final pre-merge validation elapsed 117.767 s: concurrent lint/typecheck
+4.188/2.078 s, full tests 109.933 s, then served acceptance 3.640 s. Queue delay
+was <0.001 s. Vitest reported transform 1.55 s, setup 0 s, import 9.03 s and tests
+86.60 s. Two check slots, one GPU test worker, 1536-MiB old spaces and 16-MiB
+semi-spaces were supervised with 180-s command/90-s stall deadlines and a 4-GiB
+observed RSS ceiling; no limit terminated work. Sampled combined RSS peaked at
+812,756,992 bytes. Owned temporary fixtures were removed. Logs are retained under
+`local-delivery-final-validation-v2` in the approved temporary directory; the
+earlier timeout remains under `local-delivery-final-validation`. Runtime bundles
+were unchanged and reused for this acceptance. Final-head CI and post-merge
+served-source verification close delivery.

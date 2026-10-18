@@ -228,7 +228,7 @@ describe("read-only workspace admission and inspection boundaries", () => {
 			await expect(service.invoke("inspect_workspace", { path })).rejects.toMatchObject({ code });
 			expect(await readFile(join(root, path))).toEqual(Buffer.from(bytes));
 		}
-		expect(await readFile(join(root, "large.json"))).toEqual(oversized);
+		expect((await readFile(join(root, "large.json"))).equals(oversized)).toBe(true);
 		await noArtifacts(store);
 	});
 
