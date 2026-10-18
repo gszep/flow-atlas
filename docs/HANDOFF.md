@@ -15,8 +15,9 @@ membership/denominator changes. The prior decision study's 13-minute/132-MiB rec
 is retained separately; its small no-change reference subset proves no equivalence.
 The compiled smoke exercises strict rejection, explicit count/median opt-in and
 original/compiled geometry through MCP/RPC. Independent focused source review,
-lint/typecheck and candidate compiled acceptance passed; final test/CI and merged
-acceptance evidence belongs in the delivery receipt/PR.
+lint/typecheck and candidate compiled acceptance passed. Local validation passed
+474 tests in the required suite plus seven new dedicated runtime cases (481 total).
+Exact-head CI and merged acceptance evidence belongs in the delivery receipt/PR.
 
 ## Workspace group discovery (2026-10-19)
 

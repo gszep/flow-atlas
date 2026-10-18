@@ -1341,4 +1341,17 @@ for the new semantics. In one existing sample, 768/134426 events in three fixed
 windows showed no change across 33 gates, despite maximum coordinate displacement
 0.003764 raw units. This 0.5713% nonrandom subset is not an equivalence or no-effect
 proof. Private study receipt: `flow-atlas-f32-decision-study/assessment.json`.
-No new dataset, full reference-event scan, benchmark or external host is required.
+No new dataset, expanded coordinate-comparison study, benchmark or external host
+is required. Existing oracle tests remain part of the repository-required suite;
+their results do not establish equivalence for this new profile.
+
+**Measured implementation validation:** 18 compiler regressions passed within the
+474-test required suite (42 files, 80.66 s wall; Vitest setup 0 s, transform 1.23 s,
+import 6.68 s, execution 64.15 s; maximum process RSS 555,003,904 bytes). Seven
+additional focused GPU/runtime cases passed, retaining changed parent/child/NOT
+counts, polygon ties, exact median endpoints, rejection, source immutability and
+MCP/restart receipt lineage (481 local tests total). Lint/typecheck and host build
+passed. Compiled MCP submission/RPC observation accepted the explicit lossy count
+and median profile. Checks used bounded low-priority local workers; no benchmark
+or external host. Independent numerical/source review found no outstanding issues.
+Final-head CI and merged-source served acceptance are recorded with delivery.
