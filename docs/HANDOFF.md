@@ -1,5 +1,26 @@
 # Handoff
 
+## Single-sample WSP preservation (2026-10-20)
+
+`materialize_wsp_sample` accepts one explicit sample from bounded WSP XML and an
+already-imported FCS binding. The required `preserve-xml-as-raw-v1` convention is
+structural preservation only; FlowJo interpretation and numerical execution are
+unvalidated. Raw-byte SHA is the source content revision; WSP root format version
+is a separate guard. Import/inspection now expose the FCS metadata hash needed by
+the request. The result is a new revision-zero model, exact source snapshot,
+provenance and receipt. Original files, geometry doubles and transform declarations
+are retained; groups/other samples are explicitly omitted from the model. No
+automatic F32 compilation, FCS import or analysis job is performed.
+
+Unknown selected constructs and ambiguous coordinate references reject. Strict
+bounded XML validation is opt-in at this public boundary; legacy reader defaults
+remain unchanged. Dedicated materialization tests assert zero device acquisitions.
+The built smoke materializes over MCP and inspects the resulting model over RPC.
+Independent review closed its XML attribute-whitespace finding after a targeted
+fix. Final local validation passed 497 tests in 45 files, lint/typecheck, build and
+served acceptance. Earlier timeout/native-worker failures remain recorded in the
+decision log. Exact-head CI and merged-source acceptance are recorded with delivery.
+
 ## Explicit nearest-F32 compiled recipe (2026-10-19)
 
 Workspace count and median jobs now accept explicit

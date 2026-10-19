@@ -417,6 +417,83 @@ the 256 KiB response-budget check. Standard job, cancellation and restart-observ
 operations apply. Compact persisted bindings avoid repeating large gate plans per
 sample. No workspace definitions or human-finalization stamps are changed.
 
+## Single-sample WSP structural materialization
+
+`materialize_wsp_sample` is a synchronous, bounded **metadata-only** operation.
+It creates a new model-v1 artifact for one explicitly selected WSP sample; it does
+not import FCS data, execute gates, validate FlowJo interpretation, or edit source
+documents. The caller must explicitly choose `preserve-xml-as-raw-v1`:
+
+```json
+{
+  "path": "experiment.wsp",
+  "expectedSha256": "<SHA-256 of exact WSP bytes>",
+  "expectedWspVersion": "20.0",
+  "wspSampleId": "22",
+  "sampleId": "<already imported FCS SHA-256>",
+  "expectedSampleBytes": 10220452,
+  "expectedMetadataHash": "<metadataHash from import_fcs or inspect_fcs>",
+  "coordinateConvention": "preserve-xml-as-raw-v1",
+  "agentId": "analysis-agent"
+}
+```
+
+The source SHA-256 is the WSP **content revision**. `expectedWspVersion` checks
+the root format-version string; it is not a model integer revision or a FlowJo
+application version. Imported sample responses now include `metadataHash`, the
+host canonical hash of the complete parsed FCS metadata. Actual content hash,
+byte size, metadata hash, unique complete channel-name mapping and reported sample
+event counts must agree. Channel order may differ; provenance records both indices.
+Basenames/URIs are descriptive, never an implicit file lookup/import mechanism.
+
+The response and receipt state `semantics: "structural-preservation-only"`,
+`flowJoInterpretation: "unvalidated"`, and `numericExecution: "not-validated"`.
+Every output warns that the raw/display/compensation interpretation is unvalidated.
+Source geometry doubles are preserved; missing rectangle bounds become explicit
+model null bounds. No F32 compilation, display transform or numerical operation
+runs. Subsequent analysis retains its independent strict/explicit-F32 choice.
+
+A UUID directory under managed `outputs` is published by staging and rename. It
+contains `workspace.flowatlas.json` (at most 1 MiB), `source.wsp` (the exact source
+bytes, at most 8 MiB), `provenance.json` and `receipt.json` (each at most 256 KiB).
+The bounded response returns paths, hashes, byte sizes, revision-zero model/sample
+identity and deterministic channel/gate mappings. IDs are full SHA-256-derived
+safe identifiers, deterministic for the same source bytes and imported binding;
+they are not a promise of identity across edits to the WSP. Inspect the returned
+`files.workspace.path` with `inspect_workspace`. Source counts stay reported
+metadata in provenance, never model results. All groups and other samples are
+explicitly omitted from the model; the complete original XML remains in `source.wsp`.
+Attribution is in the receipt/provenance, with no human or agent-edit stamps added
+to the new revision-zero model. Source bytes and stamps are not modified.
+
+This first slice accepts a `Workspace/SampleList/Sample` with one DataSet, Keywords,
+SampleNode and optional Transformations. Selected populations use Gate wrappers
+with exactly one rectangle, polygon or flat Boolean AND/OR/NOT. Nested population
+ancestry must agree with `parent_id`; Boolean references must be exact gate IDs in
+the selected sample. Dimensions use named `fcs-dimension` parameters. Unknown gate
+constructs, extra geometry, complement flags, external transformation/compensation
+references, malformed present numbers and negative-zero coordinates reject rather
+than disappearing or becoming unbounded. Root metadata is retained in raw XML.
+
+Known linear/log/biex display parameters are preserved without evaluation. Unknown
+transform families are retained as bounded `unsupported` declarations, including
+qualified element/attribute names and values, with warnings. They must have one
+named parameter and no unrepresented nested constructs; otherwise materialization
+rejects. This does not make an unsupported display transform evaluable.
+
+The operation uses the existing parser's opt-in strict mode: UTF-8/XML 1.0 character
+validation, no DTD/entities beyond standard/numeric character references, no external
+resolution, one root, quoted/separated attributes, duplicate local-name/prototype-key
+rejection, at most 128 levels, 100,000 elements, 128 attributes per element and
+200,000 total attributes. Attribute values are capped at 65,536 characters. Only
+the XML 1.0 UTF-8 declaration is supported as a processing instruction. Structural
+names are namespace-prefix-insensitive, as in the existing reader; this is not a
+general namespace/vendor semantic validator. Default legacy parser behavior is
+unchanged. One materialization may be in flight per service, within the existing
+request limit. Failed/cancelled operations close their source and remove owned
+staging; publication is the commit point. Filesystem confinement follows the host's
+existing same-user filesystem threat boundary, not OS isolation.
+
 ## Read-only workspace-bound analysis
 
 `inspect_workspace` reads the repository's `@flow-atlas/model` v1 JSON format from

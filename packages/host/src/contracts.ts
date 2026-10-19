@@ -122,6 +122,17 @@ const workspaceAnalysis = {
 	eventCount: index.optional(),
 };
 export const operationSchemas = {
+	materialize_wsp_sample: z.strictObject({
+		path: z.string().min(1).max(1024),
+		expectedSha256: z.string().regex(/^[a-f0-9]{64}$/),
+		expectedWspVersion: z.string().min(1).max(128),
+		wspSampleId: documentId,
+		sampleId: z.string().regex(/^[a-f0-9]{64}$/),
+		expectedSampleBytes: index,
+		expectedMetadataHash: z.string().regex(/^[a-f0-9]{64}$/),
+		coordinateConvention: z.literal("preserve-xml-as-raw-v1"),
+		agentId: z.string().min(1).max(128),
+	}),
 	inspect_workspace: z.strictObject({
 		path: workspaceIdentity.path,
 		expectedRevision: index.optional(),
