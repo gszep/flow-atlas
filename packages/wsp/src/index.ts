@@ -79,7 +79,7 @@ const numAttr = (el: XmlElement, name: string): number | undefined => {
 };
 
 function parseTransforms(sample: XmlElement): Record<string, TransformSpec> {
-	const out: Record<string, TransformSpec> = {};
+	const out: Record<string, TransformSpec> = Object.create(null);
 	const tr = child(sample, "Transformations");
 	if (!tr) return out;
 	for (const t of tr.children) {
@@ -205,11 +205,21 @@ function parseSample(s: XmlElement): WspSample {
 	};
 }
 
-export function readWsp(xml: string): Workspace {
-	const doc = parseXml(xml);
+export function readWsp(
+	xml: string,
+	options: { strict?: boolean; sampleId?: string } = {},
+): Workspace {
+	const doc = parseXml(xml, options);
 	const ws = child(doc, "Workspace");
 	if (!ws) throw new WspError("no <Workspace> root");
-	const samples = childrenOf(child(ws, "SampleList") ?? ws, "Sample").map(parseSample);
+	const samples = childrenOf(child(ws, "SampleList") ?? ws, "Sample")
+		.filter(
+			(sample) =>
+				options.sampleId === undefined ||
+				(child(sample, "DataSet")?.attrs.sampleID ??
+					child(sample, "SampleNode")?.attrs.sampleID) === options.sampleId,
+		)
+		.map(parseSample);
 	const groups: WspGroup[] = [];
 	for (const g of childrenOf(child(ws, "Groups") ?? ws, "GroupNode")) {
 		const refs = descendants(g, "SampleRef").map((r) => r.attrs.sampleID ?? "");

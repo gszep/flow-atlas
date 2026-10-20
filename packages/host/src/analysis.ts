@@ -78,6 +78,7 @@ import {
 	type WorkspaceCountRequest,
 	type WorkspaceMedianRequest,
 } from "./workspace-analysis.js";
+import { materializeWspSample } from "./wsp-materialization.js";
 
 type Metadata = Omit<FcsFile, "data">;
 declare const __FLOW_ATLAS_BUILD_ID__: string;
@@ -257,6 +258,7 @@ class FcsAnalysis implements AnalysisService {
 	private readonly instanceId = randomUUID();
 	private running: Promise<void> | null = null;
 	private pendingJobs = 0;
+	private materializingWsp = false;
 	private reservedCompensations = 0;
 	private gpuPromise: Promise<GpuContext> | null = null;
 	private gpuOwner: unknown = null;
@@ -291,6 +293,22 @@ class FcsAnalysis implements AnalysisService {
 
 	private async dispatch(name: string, input: unknown, signal: AbortSignal): Promise<unknown> {
 		switch (name) {
+			case "materialize_wsp_sample": {
+				if (this.materializingWsp)
+					throw new AnalysisError("BUSY", "One WSP materialization may be admitted at a time");
+				this.materializingWsp = true;
+				try {
+					return await materializeWspSample(
+						this.store,
+						operationSchemas.materialize_wsp_sample.parse(input),
+						(id) => this.sample(id, signal),
+						buildId,
+						signal,
+					);
+				} finally {
+					this.materializingWsp = false;
+				}
+			}
 			case "list_capabilities":
 				operationSchemas.list_capabilities.parse(input);
 				return {
@@ -323,6 +341,8 @@ class FcsAnalysis implements AnalysisService {
 						outputs: "appended fluorochromes and optional L2 residual",
 					},
 					limits: {
+						maxWspSourceBytes: 8 * 2 ** 20,
+						maxConcurrentWspMaterializations: 1,
 						maxWorkspaceDocumentBytes: 1024 * 1024,
 						maxWorkspaceBindingBytes: 32 * 1024,
 						maxCoordinateCompilationReportBytes: 64 * 1024,
@@ -355,6 +375,16 @@ class FcsAnalysis implements AnalysisService {
 						denominators: ["selected-root", "parent"],
 						zeroDenominatorFrequency: null,
 						workspaceEdits: false,
+					},
+					workspaceMaterialization: {
+						operation: "materialize_wsp_sample",
+						inputFormat: "WSP XML",
+						coordinateConvention: "preserve-xml-as-raw-v1",
+						semantics: "structural-preservation-only",
+						flowJoInterpretation: "unvalidated",
+						numericExecution: "not-validated",
+						alreadyImportedSampleRequired: true,
+						groupPolicy: "omit-all",
 					},
 					unsupported: [
 						"weighted spectral WLS/WOLS and SpectralFX",
@@ -1014,6 +1044,7 @@ class FcsAnalysis implements AnalysisService {
 
 	private summary(sample: Sample) {
 		return {
+			metadataHash: digest(sample.metadata),
 			sampleId: sample.id,
 			sha256: sample.id,
 			basename: sample.name,

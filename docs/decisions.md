@@ -1355,3 +1355,86 @@ passed. Compiled MCP submission/RPC observation accepted the explicit lossy coun
 and median profile. Checks used bounded low-priority local workers; no benchmark
 or external host. Independent numerical/source review found no outstanding issues.
 Final-head CI and merged-source served acceptance are recorded with delivery.
+
+## 2026-10-20 — Explicit single-sample WSP structural materialization
+
+**Decision:** expose `materialize_wsp_sample` as a bounded synchronous metadata
+operation, not a numerical import/conversion or an assertion of FlowJo semantics.
+The caller supplies source raw-byte SHA-256 (content revision), root format version,
+selected WSP sample, already-imported FCS hash/size/metadata hash and explicit
+`preserve-xml-as-raw-v1`. Existing import/inspection summaries expose metadataHash.
+No basename lookup, implicit FCS import, event read for computation, automatic F32
+compilation, source edit, or human-finalization stamp is added. Source population
+counts are reported metadata only. Attribution is in receipt/provenance, preserving
+the model's existing nonzero edit-revision rule; the new model is revision zero.
+
+**Verified source:** the existing WSP reader can silently omit missing Gate nodes,
+default malformed present rectangle bounds, and infer NOT for unknown Boolean
+children. The new boundary therefore performs selected-sample structural preflight
+before the actual reader and compares the resulting complete gate projection.
+Nested ancestry must agree with explicit parents; refs are exact selected-sample
+gate IDs. Unknown/ambiguous constructs and explicit transformation/compensation
+references reject. Unsupported transforms can be preserved as bounded declarations
+using the already-existing TransformSpec type; model validation now permits that
+representation without making it evaluable. No package dependency was added; host
+uses the existing workspace WSP source/project reference, bundled by the host build.
+
+**Decision:** add opt-in strict bounded parsing to the existing XML parser, keeping
+legacy defaults unchanged. Public materialization requires fatal UTF-8, an 8-MiB
+pre-read cap, XML character/entity/structure checks, no DTD/external resolution,
+duplicate/prototype attribute rejection, depth 128, 100,000 elements, and bounded
+attributes. This local-name structural vocabulary is not full namespace or vendor
+semantic validation. Both raw source bytes and unknown root metadata remain in the
+source artifact. Selected unsupported constructs reject instead of being repaired.
+
+**Ownership/bounds:** one materialization per service; a new UUID output contains
+the <=1-MiB model, exact <=8-MiB source, <=256-KiB provenance and receipt. Groups
+and other samples are explicitly omitted from the model, not silently flattened.
+Channel mapping is complete, exact-name unique and order-independent; source counts
+must agree at sample level. Full source IDs/counts/relationships and index maps are
+retained in provenance. Owned staging is removed on error/cancellation, followed
+by atomic-directory publication on success, using the existing host filesystem
+threat boundary. No general protection against hostile same-user filesystem races
+or equivalence to FlowJo interpretation is claimed.
+
+**Validation boundary:** CPU-only synthetic FCS import and MCP materialization/
+inspection tests, explicit zero acquireDevice calls, strict XML regressions and
+scoped typechecks are the implementation evidence. Compiled acceptance, independent
+review and the repository's full validation/delivery remain parent-owned holds.
+
+**Measured implementation checkpoint:** scoped WSP/model/host typechecks and
+Biome passed. The selected CPU suites passed 47 cases (9 public materialization,
+5 strict XML, 33 existing model cases); every host case asserts acquireDevice was
+never called. An initial channel-conflict fixture was internally inconsistent and
+was corrected to reach the intended mapping check. The output-budget test's initial
+5-second timeout was raised explicitly for its large synthetic metadata fixture;
+no case or rejection assertion was dropped. Independent review and compiled/full
+validation have not been performed by this implementation session.
+
+**Independent review checkpoint:** found a strict XML attribute whitespace issue:
+literal tabs/newlines must normalize before entity decoding, whereas character
+references retain their explicit character values. The correction and channel-name
+binding regression leave legacy parsing and saved source bytes unchanged. No
+other numerical, mapping, publication or provenance defect was demonstrated.
+The parent's initial required suite exceeded its 120-second command deadline
+after host tests passed; that partial run is retained and is not claimed as full
+validation. A single bounded final-source rerun supplies the completion evidence.
+
+**Final local evidence:** the first supervised final-source suite completed but
+failed on an unexpected worker exit in the unchanged numerical-oracle file.
+An independent diagnostic review found a time-correlated Node SIGSEGV in Dawn
+InstanceBase::ProcessEvents; absent worker-PID linkage, the precise attribution
+and root cause remain unproved. The unchanged 18-case file passed in isolation.
+On that new evidence, one complete PID-traced run passed **497 tests in 45 files**
+without changing assertions, selection, fixtures or worker count. Earlier failure
+logs remain retained; this is not a claim to have fixed a native lifecycle bug.
+
+The successful suite took 111.871 s total (0.008 s launcher setup; Vitest transform
+1.89 s, setup 0 s, import 10.17 s, tests 85.67 s); sampled process-group peak RSS
+was 825,827,328 bytes. Lint/typecheck passed in parallel bounded CPU slots. Final
+build and compiled materialization acceptance passed, served fingerprint
+`bf7c1a8a02d243e0ef1349038b162627bb7a9216f8a276f8f7434928f1308f4f`.
+Checks used nice+10, one test worker, bounded native threads, 180-second command /
+90-second no-output deadlines and a 2-GiB sampled process-group ceiling. No limit
+terminated the successful run. Source review is closed; final-head CI and
+merged-source acceptance remain separately recorded delivery gates.

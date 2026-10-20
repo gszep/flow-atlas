@@ -191,6 +191,20 @@ export function validateWorkspace(value: unknown): asserts value is WorkspaceDoc
 			text(channel.name);
 			if ("transform" in channel) {
 				const t = object(channel.transform);
+				if (t.type === "unsupported") {
+					fields(t, ["type", "originalType", "element", "attributes"]);
+					text(t.originalType);
+					text(t.element);
+					const attributes = object(t.attributes);
+					if (Object.keys(attributes).length > 128)
+						invalid("Too many unsupported transform attributes");
+					for (const [key, value] of Object.entries(attributes)) {
+						text(key);
+						if (typeof value !== "string" || value.length > 4096)
+							invalid("Invalid unsupported transform attribute");
+					}
+					continue;
+				}
 				const allowed =
 					t.type === "linear"
 						? ["minRange", "maxRange", "gain"]

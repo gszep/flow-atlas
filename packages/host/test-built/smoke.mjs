@@ -557,6 +557,74 @@ try {
 		}
 	}
 	assert.equal(await readFile(join(root, "lossy.flowatlas.json"), "utf8"), lossyText);
+	// Materialization is metadata-only; it neither compiles coordinates nor submits a job.
+	const sourceWsp = `<?xml version="1.0" encoding="UTF-8"?><Workspace version="20.0" flowJoVersion="10.7.1"><SampleList><Sample><DataSet sampleID="selected" uri="file:/input.fcs"/><Keywords><Keyword name="$PAR" value="2"/><Keyword name="$TOT" value="2"/><Keyword name="$P1N" value="B"/><Keyword name="$P1B" value="32"/><Keyword name="$P1R" value="262144"/><Keyword name="$P2N" value="A"/><Keyword name="$P2B" value="32"/><Keyword name="$P2R" value="262144"/></Keywords><Transformations><linear minRange="0" maxRange="10"><parameter name="A"/></linear></Transformations><SampleNode sampleID="selected" name="Preserved source" count="2"><Subpopulations><Population name="Original decimal" count="99"><Gate id="original"><RectangleGate><dimension max="0.1"><fcs-dimension name="A"/></dimension></RectangleGate></Gate></Population></Subpopulations></SampleNode></Sample></SampleList></Workspace>`;
+	await writeFile(join(root, "source.wsp"), sourceWsp);
+	const sourceWspHash = createHash("sha256").update(sourceWsp).digest("hex");
+	const importedMetadata = await call("inspect_fcs", { sampleId: sample.sampleId });
+	const materializedResponse = await mcpClient.callTool({
+		name: "materialize_wsp_sample",
+		arguments: {
+			path: "source.wsp",
+			expectedSha256: sourceWspHash,
+			expectedWspVersion: "20.0",
+			wspSampleId: "selected",
+			sampleId: sample.sampleId,
+			expectedSampleBytes: sample.bytes,
+			expectedMetadataHash: importedMetadata.metadataHash,
+			coordinateConvention: "preserve-xml-as-raw-v1",
+			agentId: "compiled-acceptance",
+		},
+	});
+	assert.notEqual(materializedResponse.isError, true, JSON.stringify(materializedResponse));
+	const materialized = JSON.parse(
+		materializedResponse.content.find((part) => part.type === "text").text,
+	);
+	assert.equal(materialized.buildId, capabilities.buildId);
+	assert.equal(materialized.semantics, "structural-preservation-only");
+	assert.equal(materialized.flowJoInterpretation, "unvalidated");
+	assert.equal(materialized.numericExecution, "not-validated");
+	assert.equal(materialized.model.revision, 0);
+	assert.equal(materialized.files.source.sha256, sourceWspHash);
+	assert.deepEqual(
+		materialized.channelMapping.map(({ fcsIndex }) => fcsIndex),
+		[2, 1],
+	);
+	const preservedModel = JSON.parse(
+		await readFile(join(root, materialized.files.workspace.path), "utf8"),
+	);
+	assert.equal(preservedModel.gates[0].geometry.max[0], 0.1);
+	assert.notEqual(preservedModel.gates[0].geometry.max[0], Math.fround(0.1));
+	assert.equal(preservedModel.gates[0].author, undefined);
+	assert.equal(preservedModel.gates[0].modified, undefined);
+	assert.deepEqual(preservedModel.samples[0].channels[1].transform, {
+		type: "linear",
+		minRange: 0,
+		maxRange: 10,
+	});
+	const materializedInspection = await call("inspect_workspace", {
+		path: materialized.files.workspace.path,
+		expectedSha256: materialized.files.workspace.sha256,
+		expectedRevision: 0,
+		view: "gates",
+	});
+	assert.equal(materializedInspection.items[0].name, "Original decimal");
+	const materializationReceipt = JSON.parse(
+		await readFile(join(root, materialized.receipt.path), "utf8"),
+	);
+	assert.equal(materializationReceipt.buildId, capabilities.buildId);
+	assert.equal(materializationReceipt.coordinateConvention, "preserve-xml-as-raw-v1");
+	const materializationProvenance = JSON.parse(
+		await readFile(join(root, materialized.files.provenance.path), "utf8"),
+	);
+	assert.equal(materializationProvenance.contentRevision, sourceWspHash);
+	assert.equal(materializationProvenance.gateMapping[0].sourceCount, 99);
+	assert.equal(
+		materializationProvenance.sourceCounts,
+		"reported-source-metadata-not-computed-truth",
+	);
+	assert.equal(await readFile(join(root, materialized.files.source.path), "utf8"), sourceWsp);
+	assert.equal(await readFile(join(root, "source.wsp"), "utf8"), sourceWsp);
 	console.log(
 		JSON.stringify({
 			result: "passed",
@@ -565,6 +633,7 @@ try {
 			nodeVersion: process.version,
 			acceptedEndpoints: ["/rpc", "/mcp"],
 			acceptedCoordinateProfile: "nearest-f32-compiled-v1",
+			acceptedMaterializationConvention: "preserve-xml-as-raw-v1",
 			check:
 				"built Node studio: FCS processing, single/batch statistics and read-only workspace-bound analysis",
 			inputHash: sample.sha256,

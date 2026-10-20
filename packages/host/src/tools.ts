@@ -9,6 +9,8 @@ import {
 } from "./contracts.js";
 
 export const operationDescriptions: Record<OperationName, string> = {
+	materialize_wsp_sample:
+		"Preserve one explicitly selected WSP sample as a new model-v1 workspace artifact, bound to source SHA/format version and already-imported FCS hash/bytes/metadataHash. Explicit preserve-xml-as-raw-v1 choice; structural preservation only, unvalidated FlowJo interpretation, no numerical execution or implicit imports. Exact source XML and reported source counts remain provenance, not computed results.",
 	inspect_workspace:
 		"Read a confined model-schema workspace JSON (up to 1 MiB), returning byte hash/revision and byte-bounded sample, gate, channel, group or group-member metadata pages. Optional hash/revision guard keeps pages consistent. No workspace edits or implicit FCS import.",
 	start_workspace_gate_counts:
