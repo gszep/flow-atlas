@@ -64,9 +64,19 @@ export interface ComputationRecord {
 		effectiveStorageWindowBytes: number;
 		deviceMaxStorageBindingBytes: number;
 		deviceMaxBufferBytes: number;
+		projectionBatchEventLimit?: number;
 	};
 	wallMs: WallPhases;
 	timingScope: string;
+	cache?: {
+		status: "miss" | "hit";
+		key: string;
+		saved?: boolean;
+		originalCompletedAt?: string;
+		originalWallMs?: WallPhases;
+		originalGpu?: ComputationRecord["gpu"];
+		error?: string;
+	};
 	gpuTimestampMeasurement: false;
 	resources: {
 		gpuMemoryBytes: null;

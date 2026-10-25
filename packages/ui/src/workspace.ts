@@ -4,12 +4,10 @@
  */
 import {
 	createStorage,
-	embedSom,
 	gateSample,
 	gatherFeatures,
 	initSom,
 	Kernels,
-	mapToSom,
 	readback,
 	type Som,
 	trainSom,
@@ -20,7 +18,10 @@ import {
 import { type FcsFile, openFcs, readFcs } from "@flow-atlas/fcs";
 import { type Table, table, UnsupportedTransformError } from "@flow-atlas/transforms";
 import { displayName, leafGates, readWsp, type WspSample } from "@flow-atlas/wsp";
+import { projectAllEvents } from "./projection.js";
 import { copySelectedRows, planSystematicSample, type SamplingSummary } from "./sampling.js";
+
+export { PROJECTION_BATCH_EVENTS } from "./projection.js";
 
 export interface SampleInfo {
 	name: string;
@@ -356,6 +357,7 @@ export interface EmbedOptions {
 	seed?: number;
 	trainMax?: number;
 }
+
 export interface EmbeddingWallTimings {
 	featurePreparationMs: number;
 	somTrainingMs: number;
@@ -443,12 +445,13 @@ export async function computeEmbedding(
 	const projectionStarted = performance.now();
 	await yieldToUi();
 	w.som = som;
-	w.bmu = mapToSom(k, features, som, maxBinding);
-	w.embedding = embedSom(k, features, som, maxBinding);
+	const projected = await projectAllEvents(k, features, som, maxBinding, progress);
+	w.bmu = projected.bmu;
+	w.embedding = projected.embedding;
 	await device.queue.onSubmittedWorkDone();
 	const mapEmbedProjectionMs = performance.now() - projectionStarted;
 	const boundsStarted = performance.now();
-	// Bounds from a strided readback.
+	// View bounds from a bounded prefix, not a claim to enumerate all output extrema.
 	const emb = await readback(device, w.embedding, Float32Array, Math.min(w.n, 500_000) * 8);
 	let minX = Number.POSITIVE_INFINITY;
 	let maxX = Number.NEGATIVE_INFINITY;
@@ -471,6 +474,12 @@ export async function computeEmbedding(
 		maxY: Math.min(maxY, ydim + 1),
 	};
 	features.buffer.destroy();
+	if (
+		!Object.values(w.bounds).every(Number.isFinite) ||
+		w.bounds.minX >= w.bounds.maxX ||
+		w.bounds.minY >= w.bounds.maxY
+	)
+		throw new Error("Projection did not produce a usable map on this GPU");
 	progress(
 		`embedding ready: ${w.n.toLocaleString()} events in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
 	);

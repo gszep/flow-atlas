@@ -8,7 +8,9 @@ export function downloadPresentation(progress: PublicationProgress) {
 		label:
 			percent === 100 && progress.verifiedFiles < progress.fileCount
 				? "Verifying downloaded files…"
-				: "Downloading dataset…",
+				: progress.cachedFiles
+					? "Loading cached data…"
+					: "Downloading dataset…",
 		detail: `${Math.floor(percent)}% · ${(progress.downloadedBytes / 2 ** 20).toFixed(1)} / ${(progress.totalBytes / 2 ** 20).toFixed(1)} MiB · ${progress.verifiedFiles}/${progress.fileCount} files verified`,
 		percent,
 	};
