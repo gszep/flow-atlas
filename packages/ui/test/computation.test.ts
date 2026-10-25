@@ -6,12 +6,7 @@ import {
 	publishComputationRecord,
 } from "../src/computation.js";
 import { DEMO_EMBED_OPTIONS } from "../src/demo.js";
-import {
-	PUBLICATION_EMBED_OPTIONS,
-	publicationProfileLabel,
-	publicationTrainingMode,
-	publicationTrainingOptions,
-} from "../src/publication.js";
+import { PUBLICATION_EMBED_OPTIONS } from "../src/publication.js";
 
 function record(): ComputationRecord {
 	return {
@@ -19,9 +14,10 @@ function record(): ComputationRecord {
 		completedAt: "2026-10-25T00:00:00Z",
 		profile: "test",
 		source: { kind: "publication", inputFileCount: 34, sampleCount: 33 },
-		settings: embeddingSettings(publicationTrainingOptions(3885530, "all"), 3885530),
-		projectedEventCount: 3885530,
-		renderedEventCount: 3885530,
+		settings: embeddingSettings(PUBLICATION_EMBED_OPTIONS, 100000),
+		sourceEventCount: 3885530,
+		projectedEventCount: 100000,
+		renderedEventCount: 100000,
 		featureCount: 2,
 		features: ["A", "B"],
 		renderScope: "Renderer inputs, not visible pixel count",
@@ -52,37 +48,23 @@ function record(): ComputationRecord {
 	};
 }
 describe("client computation settings and wall-time records (CPU only)", () => {
-	it("changes only trainMax for all-event publication training and selects stride one", () => {
-		const limited = publicationTrainingOptions(3885530, "limited"),
-			all = publicationTrainingOptions(3885530, "all");
-		expect(limited).toEqual(PUBLICATION_EMBED_OPTIONS);
-		expect(all).toEqual({ ...limited, trainMax: 3885530 });
-		expect(embeddingSettings(all, 3885530).training).toMatchObject({
-			mode: "all-events",
-			stride: 1,
-			trainMax: 3885530,
+	it("trains and projects the explicit 100k sample with stride-one initialization and training", () => {
+		expect(embeddingSettings(PUBLICATION_EMBED_OPTIONS, 100000)).toMatchObject({
+			grid: { x: 20, y: 20 },
+			epochs: 10,
+			training: {
+				mode: "all-events",
+				stride: 1,
+				trainMax: 100000,
+				eventScope: "selected-input-rows",
+			},
+			initializationStats: "strided",
+			initializationStatsStride: 1,
+			initializationStatsRows: 100000,
+			seeds: { initialization: 42, training: 42 },
 		});
-		expect(embeddingSettings(limited, 3885530).training).toMatchObject({
-			mode: "bounded",
-			stride: 39,
-			actualSelectedCount: null,
-		});
-		expect(publicationProfileLabel(3885530, "limited")).toContain("up to 100,000");
-		expect(publicationProfileLabel(3885530, "all")).toContain("stride 1");
-		expect(publicationProfileLabel(3885530, "all")).toContain("per SOM training epoch");
-		for (const options of [limited, all]) {
-			expect(embeddingSettings(options, 3885530)).toMatchObject({
-				initializationStats: "strided",
-				initializationStatsStride: 19,
-				initializationStatsRows: 204501,
-				training: { scope: "per-SOM-training-epoch" },
-			});
-		}
 	});
-	it("keeps default/local and synthetic settings unchanged and handles the all-events deep link", () => {
-		expect(publicationTrainingMode("?publication&training=all")).toBe("all");
-		expect(publicationTrainingMode("?publication")).toBe("limited");
-		expect(publicationTrainingMode("?publication&training=invalid")).toBe("limited");
+	it("keeps internal default/local and synthetic settings unchanged", () => {
 		expect(embeddingSettings({}, 3885530)).toMatchObject({
 			grid: { x: 20, y: 20 },
 			epochs: 20,
@@ -95,7 +77,6 @@ describe("client computation settings and wall-time records (CPU only)", () => {
 			training: { trainMax: 4096 },
 			seeds: { imputation: 20261025, initialization: 20261025, training: 20261025 },
 		});
-		expect(() => publicationTrainingOptions(0, "all")).toThrow(/event count/);
 	});
 	it("publishes metadata-only JSON and clears stale data on a new load or failure", () => {
 		const node = { textContent: "stale" },

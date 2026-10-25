@@ -1,8 +1,9 @@
 # Public browser demo
 
 The user-authorized public presentation surface is `https://flow.gszep.com`.
-It serves the browser prototype and the user-authorized publication companion dataset, with current
-capabilities separated from the proposed collective Verification/Discovery workflow.
+It serves the browser prototype and the user-authorized publication companion dataset.
+The public entry automatically downloads the companion, shows a centered loading
+bar, and prepares a deterministic 100,000-event quick view with minimal controls.
 This is separate from the local agent studio described in `DELIVERY.md`.
 
 ## Publication boundary
@@ -12,13 +13,13 @@ This is separate from the local agent studio described in `DELIVERY.md`.
 - Publish only the exact companion WSP/FCS files pinned by the publication
   manifest, through the explicit publication staging option. Original files remain
   unchanged and outside Git. Do not copy other local oracle files, acquired corpora,
-  experiments, tokens or the host's RPC/MCP service. User-selected files remain in
-  their browser. The optional synthetic example is only a technical diagnostic.
+  experiments, tokens or the host's RPC/MCP service. The public UI has no upload
+  or dataset-selection surface; synthetic fixtures remain development tests only.
 - The existing browser pipeline is a visualization prototype, not a view of a
-  host analysis receipt. Neither its plots nor the companion/synthetic examples establish
+  host analysis receipt. Its sampled companion view does not establish
   FlowJo fidelity, biological accuracy or collective-review effectiveness.
-- Keep the planned review/community workflow visibly distinct from working UI.
-  WebGPU is required for the interactive computation; no CPU fallback is added.
+- Planned review/community capabilities remain in the roadmap rather than public
+  sidebar prose. WebGPU is required; no CPU fallback is added.
 
 ## Hosting
 
@@ -62,18 +63,19 @@ unlisted data remain excluded. The companion snapshot has 33 FCS files containin
 3,885,530 events (290,739,412 FCS bytes) and a 5,102,255-byte WSP. The paper describes
 32 files; label the loaded companion version and its actual counts explicitly.
 Large data responses must stream rather than buffer whole files in the server.
-All loaded events are projected/rendered; any codebook-training limit is a separate
-displayed setting and is not a claim to reproduce the paper's embedding.
+The complete source is downloaded and verified, then a deterministic 100,000-event
+sample is selected before GPU allocation, gating, training and projection. Displayed
+counts describe that sample, not whole-source frequencies or the paper's embedding.
 `PUBLICATION_ROOT` is an explicitly supplied private source-directory binding,
 never an automatically scanned corpus or a path embedded in the public manifest.
 Omit the publication option only for a code-only package.
 
-`?publication` starts the complete companion load. `?publication&training=all`
-uses every loaded event per SOM training epoch; the alternative caps training at
-100,000. Both use a 20-by-20 SOM, ten epochs and seed 42, then project all events
-with EmbedSOM. Initialization statistics remain strided and are disclosed. The
-computation summary reports wall-clock phases with queue completion, not isolated
-GPU timestamps; uninstrumented memory/utilization fields remain unknown.
+Opening the page starts loading without a query parameter or button. Legacy query
+parameters do not restore the former full-data view. The quick profile uses a
+20-by-20 SOM, ten epochs and seed 42 on the selected sample. A compact sampled-event
+badge is visible; detailed computation/sampling metadata remain in the JSON record.
+Wall-clock phase timings are not isolated GPU timestamps, and uninstrumented
+memory/utilization fields remain unknown.
 
 From that staged package, the authorized operator uses the approved named gcloud
 configuration and project binding:
@@ -94,13 +96,13 @@ acceptance condition from a successful Cloud Run deployment.
 ## Acceptance and rollback
 
 Before publishing, run the affected UI build/typecheck, scoped checks and visual
-QA of the synthetic load, legend/colour controls, responsive layout and unsupported
+QA of automatic loading, progress/error states, sampled-map controls and responsive layout and the unsupported
 WebGPU message. Confirm that the staged package contains only intended public files.
 Follow the normal branch/review/CI/merge flow; deploy the accepted source revision.
 
 After deployment, verify the Cloud Run URL and the custom-domain HTTPS URL without
 disabling certificate verification. Check the served release identity and assets,
-and exercise the synthetic example in a real WebGPU browser. Record exact source,
+and exercise the quick companion view in a real WebGPU browser. Record exact source,
 Cloud Run revision/image identity, domain/TLS status, checks and limitations.
 
 Cloud Run preserves prior revisions. For an update, capture the currently serving

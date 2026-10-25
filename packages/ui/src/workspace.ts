@@ -17,21 +17,31 @@ import {
 	upload,
 	uploadTable,
 } from "@flow-atlas/compute";
-import { type FcsFile, readFcs } from "@flow-atlas/fcs";
+import { type FcsFile, openFcs, readFcs } from "@flow-atlas/fcs";
 import { type Table, table, UnsupportedTransformError } from "@flow-atlas/transforms";
 import { displayName, leafGates, readWsp, type WspSample } from "@flow-atlas/wsp";
+import { copySelectedRows, planSystematicSample, type SamplingSummary } from "./sampling.js";
 
 export interface SampleInfo {
 	name: string;
 	basename: string;
 	offset: number;
 	count: number;
+	sourceCount: number;
+	sourceOffset: number;
 	groups: string[];
-	gateCounts: Array<{ name: string; count: number; expected: number | null }>;
+	gateCounts: Array<{
+		name: string;
+		count: number;
+		expected: number | null;
+		sourceReportedCount: number | null;
+	}>;
 }
 
 export interface LoadedWorkspace {
 	n: number;
+	sourceEventCount: number;
+	sampling: SamplingSummary | null;
 	channels: string[];
 	/** Transformed columns over all events; NaN where the sample lacks the channel. */
 	channelBuffers: GPUBuffer[];
@@ -51,6 +61,93 @@ export interface LoadedWorkspace {
 }
 
 export type Progress = (msg: string) => void;
+export interface WorkspaceLoadOptions {
+	sampling?: { maximumEvents: number };
+	expectedSource?: { eventCount: number; samples: Array<{ basename: string; events?: number }> };
+}
+
+/** CPU decode/row-selection preprocessing, completed before any GPU buffer allocation. */
+export async function prepareWorkspaceSamples(
+	samples: WspSample[],
+	fcsFiles: Map<string, File>,
+	progress: Progress,
+	options: WorkspaceLoadOptions = {},
+) {
+	const metadata: Array<{ s: WspSample; sourceCount: number }> = [];
+	if (options.sampling || options.expectedSource) {
+		for (const s of samples) {
+			const file = fcsFiles.get(s.basename) as File;
+			const reader = await openFcs({
+				size: file.size,
+				read: async (offset, length) =>
+					new Uint8Array(await file.slice(offset, offset + length).arrayBuffer()),
+			});
+			metadata.push({ s, sourceCount: reader.metadata.eventCount });
+		}
+		const expected = options.expectedSource;
+		if (expected) {
+			const counts = new Map(expected.samples.map((sample) => [sample.basename, sample.events]));
+			if (
+				samples.length !== expected.samples.length ||
+				new Set(samples.map((sample) => sample.basename)).size !== counts.size ||
+				metadata.reduce((sum, item) => sum + item.sourceCount, 0) !== expected.eventCount ||
+				metadata.some(
+					({ s, sourceCount }) =>
+						!counts.has(s.basename) ||
+						(counts.get(s.basename) !== undefined && counts.get(s.basename) !== sourceCount),
+				)
+			)
+				throw new Error("Full source sample/event counts differ from the publication manifest");
+		}
+	}
+	const plan = options.sampling
+		? planSystematicSample(
+				metadata.map(({ s, sourceCount }) => ({
+					sampleId: s.id,
+					basename: s.basename,
+					eventCount: sourceCount,
+				})),
+				options.sampling.maximumEvents,
+			)
+		: null;
+	const parsed: Array<{
+		s: WspSample;
+		f: FcsFile;
+		offset: number;
+		sourceCount: number;
+		sourceOffset: number;
+	}> = [];
+	let n = 0,
+		sourceEventCount = 0;
+	for (const [index, s] of samples.entries()) {
+		const file = fcsFiles.get(s.basename) as File;
+		progress(`Reading ${s.basename}`);
+		await yieldToUi();
+		const source = readFcs(await file.arrayBuffer());
+		if (metadata[index] && metadata[index].sourceCount !== source.eventCount)
+			throw new Error("Source row count changed during sampling preparation");
+		const indices = plan?.indices[index];
+		const f = indices
+			? {
+					...source,
+					eventCount: indices.length,
+					data: copySelectedRows(source.data, source.channels.length, indices),
+				}
+			: source;
+		parsed.push({
+			s,
+			f,
+			offset: n,
+			sourceCount: source.eventCount,
+			sourceOffset: sourceEventCount,
+		});
+		n += f.eventCount;
+		sourceEventCount += source.eventCount;
+	}
+	if (plan && n !== plan.summary.selectedEventCount)
+		throw new Error("Prepared sample does not match selection plan");
+	return { parsed, n, sourceEventCount, sampling: plan?.summary ?? null };
+}
 
 const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0));
 
@@ -60,6 +157,7 @@ export async function loadWorkspace(
 	wspText: string,
 	fcsFiles: Map<string, File>,
 	progress: Progress,
+	options: WorkspaceLoadOptions = {},
 ): Promise<LoadedWorkspace> {
 	const ws = readWsp(wspText);
 	const samples = ws.samples.filter((s) => fcsFiles.has(s.basename));
@@ -105,17 +203,13 @@ export async function loadWorkspace(
 	const conditions = groups.filter((g) => !/\d/.test(g.name)).map((g) => g.name);
 	const batches = groups.filter((g) => /\d/.test(g.name)).map((g) => g.name);
 
-	// Read FCS headers first to know sizes and offsets.
-	const parsed: Array<{ s: WspSample; f: FcsFile; offset: number }> = [];
-	let n = 0;
-	for (const s of samples) {
-		const file = fcsFiles.get(s.basename) as File;
-		progress(`reading ${s.basename} (${(file.size / 1e6).toFixed(1)} MB)`);
-		await yieldToUi();
-		const f = readFcs(await file.arrayBuffer());
-		parsed.push({ s, f, offset: n });
-		n += f.eventCount;
-	}
+	const { parsed, n, sourceEventCount, sampling } = await prepareWorkspaceSamples(
+		samples,
+		fcsFiles,
+		progress,
+		options,
+	);
+	if (options.sampling && n === 0) throw new Error("No source events available to sample");
 	progress(
 		`${n.toLocaleString()} events, ${channelNames.length} channels, ${populations.length} populations`,
 	);
@@ -137,7 +231,25 @@ export async function loadWorkspace(
 	const embedSet = new Set<number>();
 
 	for (let si = 0; si < parsed.length; si++) {
-		const { s, f, offset } = parsed[si] as (typeof parsed)[number];
+		const { s, f, offset, sourceCount, sourceOffset } = parsed[si] as (typeof parsed)[number];
+		if (f.eventCount === 0 && sampling) {
+			sampleInfos.push({
+				name: s.name,
+				basename: s.basename,
+				offset,
+				count: 0,
+				sourceCount,
+				sourceOffset,
+				groups: groups.filter((group) => group.sampleIds.includes(s.id)).map((group) => group.name),
+				gateCounts: s.gates.map((gate) => ({
+					name: gate.name,
+					count: 0,
+					expected: null,
+					sourceReportedCount: gate.count,
+				})),
+			});
+			continue;
+		}
 		progress(`transform + gate ${s.basename} (${si + 1}/${parsed.length})`);
 		await yieldToUi();
 		sampleIdArr.fill(si, offset, offset + f.eventCount);
@@ -189,11 +301,14 @@ export async function loadWorkspace(
 			basename: s.basename,
 			offset,
 			count: f.eventCount,
+			sourceCount,
+			sourceOffset,
 			groups: groups.filter((g) => g.sampleIds.includes(s.id)).map((g) => g.name),
 			gateCounts: r.counts.map((c) => ({
 				name: c.gate.name,
 				count: c.count,
-				expected: c.expected,
+				expected: sampling ? null : c.expected,
+				sourceReportedCount: c.expected,
 			})),
 		});
 	}
@@ -214,6 +329,8 @@ export async function loadWorkspace(
 
 	return {
 		n,
+		sourceEventCount,
+		sampling,
 		channels: channelNames,
 		channelBuffers,
 		channelPresent,

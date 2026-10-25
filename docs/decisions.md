@@ -1581,3 +1581,22 @@ instrument-aware panel design from biological intent and experimental verificati
 The current conventional-flow demo is a baseline, not spectral validation. The
 34-parameter panel paper's MS example and its raw-data acquisition are separate
 work; neither this dataset nor this embedding substitutes for those samples.
+
+## 2026-10-26 — Minimal automatic quick-view demo
+
+**User-authorized change:** remove the explanatory sidebar, automatic companion
+loading with a centered byte-progress indicator, and a 100,000-event sample for
+quick EmbedSOM. This supersedes the prior all-event public-view default, not the
+underlying full source or the host's numerical contracts. The full companion is
+still downloaded and hash-verified; deterministic global midpoint row selection
+occurs before GPU allocation, transformations, gating, training and projection.
+Selection spans concatenated WSP sample order, preserves full row/channel alignment,
+and retains original counts/offsets separately. Displayed counts are sampled counts.
+
+**Measured:** 29 scoped CPU UI tests, UI build, lint/typecheck and independent
+source review passed. A Calcifer browser check covered automatic loading, an
+injected initial HTTP503 and successful retry, centered determinate progress,
+100,000 projected/renderer-input rows from 3,885,530 source rows, controls and
+mobile layout. The successful local run took 10.637 s wall time. No Artemis GPU
+work was used. Unchanged dataset/server/kernel components are reused; normal CI
+and served-version checks remain required for delivery.
