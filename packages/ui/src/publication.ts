@@ -1,3 +1,5 @@
+import type { BrowserCache } from "./browser-cache.js";
+
 export const PUBLICATION_EMBED_OPTIONS = Object.freeze({
 	xdim: 20,
 	ydim: 20,
@@ -38,12 +40,21 @@ export interface PublicationProgress {
 	fileCount: number;
 	downloadedBytes: number;
 	totalBytes: number;
+	cachedFiles?: number;
 }
 interface Options {
 	baseUrl?: string;
 	fetch?: typeof fetch;
 	signal?: AbortSignal;
 	onProgress?: (progress: PublicationProgress) => void;
+	cache?: BrowserCache;
+}
+
+export const rawCacheKey = (file: PublicationFile) => `raw:${file.sha256}`;
+export async function bytesHash(bytes: ArrayBuffer): Promise<string> {
+	return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
 }
 function invalid(message: string): never {
 	throw new Error(`Publication dataset: ${message}`);
@@ -243,6 +254,7 @@ export async function downloadPublicationFiles(
 	const result: File[] = new Array(files.length);
 	let next = 0,
 		verified = 0,
+		cachedFiles = 0,
 		downloaded = 0,
 		failed = false,
 		failure: unknown;
@@ -253,6 +265,7 @@ export async function downloadPublicationFiles(
 			fileCount: files.length,
 			downloadedBytes: downloaded,
 			totalBytes: manifest.totalBytes,
+			...(options.cache ? { cachedFiles } : {}),
 		});
 	const worker = async () => {
 		try {
@@ -261,22 +274,39 @@ export async function downloadPublicationFiles(
 				const index = next++,
 					file = files[index] as PublicationFile;
 				const url = new URL(file.path.split("/").map(encodeURIComponent).join("/"), base);
-				const response = await fetcher(url, {
-					method: "GET",
-					credentials: "omit",
-					redirect: "error",
-					signal,
-				});
-				const bytes = await readBounded(response, file.bytes, file.bytes, signal, (count) => {
-					downloaded += count;
-					progress();
-				});
-				const actual = Array.from(
-					new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
-					(byte) => byte.toString(16).padStart(2, "0"),
-				).join("");
+				let bytes: Uint8Array<ArrayBuffer> | undefined;
+				const cached = await options.cache?.get(rawCacheKey(file)).catch(() => undefined);
+				if (cached instanceof Blob && cached.size === file.bytes) {
+					try {
+						const buffer = await cached.arrayBuffer();
+						if ((await bytesHash(buffer)) === file.sha256) {
+							bytes = new Uint8Array(buffer);
+							cachedFiles++;
+							downloaded += bytes.byteLength;
+							progress();
+						}
+					} catch {
+						/* Unreadable or corrupt cached bytes are re-fetched. */
+					}
+				}
+				if (!bytes) {
+					if (cached !== undefined) await options.cache?.remove(rawCacheKey(file)).catch(() => {});
+					const response = await fetcher(url, {
+						method: "GET",
+						credentials: "omit",
+						redirect: "error",
+						signal,
+					});
+					bytes = await readBounded(response, file.bytes, file.bytes, signal, (count) => {
+						downloaded += count;
+						progress();
+					});
+					const actual = await bytesHash(bytes.buffer);
+					signal.throwIfAborted();
+					if (actual !== file.sha256) invalid(`SHA-256 mismatch for ${file.name}`);
+					await options.cache?.put(rawCacheKey(file), new Blob([bytes.buffer])).catch(() => false);
+				}
 				signal.throwIfAborted();
-				if (actual !== file.sha256) invalid(`SHA-256 mismatch for ${file.name}`);
 				result[index] = new File([bytes.buffer], file.name, {
 					type: file.kind === "wsp" ? "application/xml" : "application/octet-stream",
 					lastModified: 0,
@@ -305,9 +335,7 @@ export async function downloadPublicationFiles(
 	}
 }
 
-export async function loadPublicationDataset(
-	options: Options = {},
-): Promise<{ manifest: PublicationManifest; files: File[] }> {
+export async function loadPublicationManifest(options: Options = {}): Promise<PublicationManifest> {
 	const { controller, unlink } = ownedAbort(options.signal);
 	try {
 		const signal = controller.signal;
@@ -327,12 +355,18 @@ export async function loadPublicationDataset(
 		const manifest = validatePublicationManifest(
 			JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
 		);
-		const files = await downloadPublicationFiles(manifest, { ...options, signal });
-		return { manifest, files };
+		return manifest;
 	} catch (error) {
 		controller.abort(error);
 		throw error;
 	} finally {
 		unlink();
 	}
+}
+
+export async function loadPublicationDataset(
+	options: Options = {},
+): Promise<{ manifest: PublicationManifest; files: File[] }> {
+	const manifest = await loadPublicationManifest(options);
+	return { manifest, files: await downloadPublicationFiles(manifest, options) };
 }

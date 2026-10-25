@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { BrowserCache } from "../src/browser-cache.js";
 import {
 	downloadPublicationFiles,
 	loadPublicationDataset,
@@ -62,6 +63,52 @@ async function entry(path: string, bytes: Uint8Array): Promise<PublicationFile> 
 	};
 }
 const baseUrl = "https://example.test/project/index.html";
+
+it("persists verified file bytes and avoids network on the next load; corrupt cache is re-fetched", async () => {
+	const bytes = new Uint8Array([1, 2, 3, 4]),
+		file = await entry("one.fcs", bytes);
+	const entries = new Map<string, unknown>();
+	const cache: BrowserCache = {
+		get: async (key) => entries.get(key),
+		put: async (key, value) => {
+			entries.set(key, value);
+			return true;
+		},
+		remove: async (key) => {
+			entries.delete(key);
+		},
+		retain: async () => {},
+	};
+	const fetcher = vi.fn(async () => new Response(bytes)) as unknown as typeof fetch;
+	const input = { files: [file], totalBytes: 4 };
+	await downloadPublicationFiles(input, { baseUrl, cache, fetch: fetcher });
+	await downloadPublicationFiles(input, { baseUrl, cache, fetch: fetcher });
+	expect(fetcher).toHaveBeenCalledTimes(1);
+	entries.set(`raw:${file.sha256}`, new Blob([new Uint8Array([9, 9, 9, 9])]));
+	const result = await downloadPublicationFiles(input, { baseUrl, cache, fetch: fetcher });
+	expect(fetcher).toHaveBeenCalledTimes(2);
+	expect(new Uint8Array(await result[0]?.arrayBuffer())).toEqual(bytes);
+});
+
+it("still loads when browser persistence fails", async () => {
+	const bytes = new Uint8Array([4, 3, 2, 1]),
+		file = await entry("one.fcs", bytes);
+	const cache: BrowserCache = {
+		get: async () => {
+			throw new Error("denied");
+		},
+		put: async () => {
+			throw new Error("quota");
+		},
+		remove: async () => {},
+		retain: async () => {},
+	};
+	const result = await downloadPublicationFiles(
+		{ files: [file], totalBytes: 4 },
+		{ baseUrl, cache, fetch: (async () => new Response(bytes)) as typeof fetch },
+	);
+	expect(new Uint8Array(await result[0]?.arrayBuffer())).toEqual(bytes);
+});
 
 describe("publication manifest and bounded verified transport (mock payloads only)", () => {
 	it("accepts the agreed complete companion manifest without requiring optional per-file metadata", () => {

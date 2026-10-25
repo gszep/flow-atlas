@@ -1600,3 +1600,35 @@ injected initial HTTP503 and successful retry, centered determinate progress,
 mobile layout. The successful local run took 10.637 s wall time. No Artemis GPU
 work was used. Unchanged dataset/server/kernel components are reused; normal CI
 and served-version checks remain required for delivery.
+
+## 2026-10-26 — Train on a subset, project all, persist the browser result
+
+**User clarification supersedes the prior quick-view sample:** the 100,000-event
+limit applies only to SOM training. All 3,885,530 companion events must remain in
+gating, projection and rendering. Keep the minimal automatic UI and add native
+IndexedDB caching for verified raw files and the computed map. A result key binds
+source/profile/engine identity; incomplete, mismatched or corrupt entries are cache
+misses. Browser storage is best-effort, scoped to the origin and independent of
+the host's immutable artifacts or human verification authority.
+
+**Measured failure and correction:** on Calcifer's Intel GPU, the original large
+projection produced zero sampled output coordinates despite finite varied inputs
+and codebook values. A 256-row run with the same inputs/codebook produced valid
+coordinates. Smaller dispatches in one large command buffer did not resolve the
+failure. GPU-only chunk copies, bounded 65,536-row projection batches, explicit
+queue draining and invocation-owned allocation cleanup did. No events are removed;
+the pointwise WGSL arithmetic is unchanged. This establishes an operational
+correction, not a uniquely identified driver fault. A first-chunk comparison with
+a tiny projection and the aggregate copy guards that path; invalid bounds reject
+before a ready map or cache is published.
+
+An interrupted acceptance run had no retained completion receipt after a harness
+restart. Source changes survived; temporary staging and earlier detailed diagnostic
+files did not. Historical failed checks remain described here, not misreported as
+preserved raw logs. Recovery resumed the remaining browser acceptance on Chrome
+155.0.8059.86, with no Artemis GPU work. The source cache survived: zero FCS/WSP
+requests were made. Full computation took 61.252 s wall time (excluding subsequent
+cache persistence), and a new-tab computed-map restore took 2.048 s with zero
+SOM/projection work and zero FCS/WSP requests. Both supplied all 3,885,530 events
+to the renderer. These are local feasibility observations, not a universal latency
+guarantee or numerical/biological parity claim.

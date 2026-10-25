@@ -1,4 +1,5 @@
 import { acquireDevice, createStorage, readback, upload } from "@flow-atlas/compute";
+import { browserCache } from "./browser-cache.js";
 import colorizeSrc from "./colorize.wgsl?raw";
 import {
 	clearComputationRecord,
@@ -6,10 +7,19 @@ import {
 	publishComputationRecord,
 } from "./computation.js";
 import { createLoadGate, downloadPresentation } from "./loading.js";
-import { loadPublicationDataset, PUBLICATION_EMBED_OPTIONS } from "./publication.js";
+import {
+	downloadPublicationFiles,
+	loadPublicationManifest,
+	PUBLICATION_EMBED_OPTIONS,
+} from "./publication.js";
 import { PointRenderer } from "./renderer.js";
-import { QUICK_DEMO_EVENTS } from "./sampling.js";
-import { computeEmbedding, type LoadedWorkspace, loadWorkspace } from "./workspace.js";
+import {
+	computeEmbedding,
+	type LoadedWorkspace,
+	loadWorkspace,
+	PROJECTION_BATCH_EVENTS,
+} from "./workspace.js";
+import { restoreWorkspaceCache, saveWorkspaceCache, workspaceCacheKey } from "./workspace-cache.js";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const status = $("status"),
@@ -412,10 +422,11 @@ async function main() {
 			popColors.length = 0;
 			unlabelledSelected = true;
 			colorBy = "labels";
-			const loaded = await loadPublicationDataset({
+			const transport = {
 				baseUrl: document.baseURI,
 				signal: loadAbort.signal,
-				onProgress: (progress) => {
+				cache: browserCache,
+				onProgress: (progress: import("./publication.js").PublicationProgress) => {
 					const view = downloadPresentation(progress);
 					status.setAttribute("role", "status");
 					status.textContent = view.label;
@@ -424,40 +435,59 @@ async function main() {
 					if (view.percent === null) progressBar.removeAttribute("value");
 					else progressBar.value = view.percent;
 				},
-			});
-			const inputMs = performance.now() - t0,
-				publication = loaded.manifest;
-			const wsp = loaded.files.find((file) => file.name.toLowerCase().endsWith(".wsp")) as File;
-			const fcs = new Map(
-				loaded.files
-					.filter((file) => file.name.toLowerCase().endsWith(".fcs"))
-					.map((file) => [file.name, file]),
-			);
-			log("Preparing map…");
+			};
+			const publication = await loadPublicationManifest(transport);
+			const cacheKey = await workspaceCacheKey(publication, computeBinding);
+			log("Restoring cached map…");
 			next = bufferScope(device);
 			device.pushErrorScope("validation");
 			scopeOpen = true;
-			const parseStarted = performance.now();
-			ws = await loadWorkspace(next.device, computeBinding, await wsp.text(), fcs, log, {
-				sampling: { maximumEvents: QUICK_DEMO_EVENTS },
-				expectedSource: {
-					eventCount: publication.eventCount,
-					samples: publication.files
-						.filter((file) => file.kind === "fcs")
-						.map((file) => ({
-							basename: file.name,
-							...(file.events === undefined ? {} : { events: file.events }),
-						})),
-				},
-			});
-			await device.queue.onSubmittedWorkDone();
-			const parseMs = performance.now() - parseStarted;
+			const cached = await restoreWorkspaceCache(browserCache, cacheKey, publication, next.device);
+			loadAbort.signal.throwIfAborted();
+			let inputMs = performance.now() - t0,
+				parseMs = 0;
+			const options = { ...PUBLICATION_EMBED_OPTIONS };
+			let timing = {
+				featurePreparationMs: 0,
+				somTrainingMs: 0,
+				mapEmbedProjectionMs: 0,
+				boundsReadbackMs: 0,
+			};
+			if (cached) {
+				ws = cached.workspace;
+				log("Restoring cached map…");
+			} else {
+				const files = await downloadPublicationFiles(publication, transport);
+				inputMs = performance.now() - t0;
+				const wsp = files.find((file) => file.name.toLowerCase().endsWith(".wsp")) as File;
+				const fcs = new Map(
+					files
+						.filter((file) => file.name.toLowerCase().endsWith(".fcs"))
+						.map((file) => [file.name, file]),
+				);
+				log("Preparing map…");
+				const parseStarted = performance.now();
+				ws = await loadWorkspace(next.device, computeBinding, await wsp.text(), fcs, log, {
+					expectedSource: {
+						eventCount: publication.eventCount,
+						samples: publication.files
+							.filter((file) => file.kind === "fcs")
+							.map((file) => ({
+								basename: file.name,
+								...(file.events === undefined ? {} : { events: file.events }),
+							})),
+					},
+				});
+				await device.queue.onSubmittedWorkDone();
+				parseMs = performance.now() - parseStarted;
+				timing = await computeEmbedding(next.device, computeBinding, ws, log, options);
+			}
 			if (
 				ws.sourceEventCount !== publication.eventCount ||
-				ws.n !== Math.min(ws.sourceEventCount, QUICK_DEMO_EVENTS) ||
-				!ws.sampling
+				ws.n !== publication.eventCount ||
+				ws.sampling !== null
 			)
-				throw new Error("Sampled workspace does not match the verified source");
+				throw new Error("Workspace does not match the complete verified source");
 			ws.populations.forEach((_, i) => {
 				popColors[i] = LABEL_PALETTE[i % LABEL_PALETTE.length] as string;
 				popSelected.add(i);
@@ -469,8 +499,6 @@ async function main() {
 			ws.batches.forEach((group, i) => {
 				groupColors.set(group, LABEL_PALETTE[(i + 5) % LABEL_PALETTE.length] as string);
 			});
-			const options = { ...PUBLICATION_EMBED_OPTIONS, trainMax: Math.min(ws.n, QUICK_DEMO_EVENTS) };
-			const timing = await computeEmbedding(next.device, computeBinding, ws, log, options);
 			const displayStarted = performance.now();
 			colorBuf = createStorage(next.device, ws.n * 4, undefined, "color");
 			renderer.setData(
@@ -491,63 +519,101 @@ async function main() {
 			next.releaseExcept(keep);
 			const displayMs = timing.boundsReadbackMs + performance.now() - displayStarted,
 				totalMs = performance.now() - t0;
-			publishComputationRecord(
-				{
-					schemaVersion: 1,
-					completedAt: new Date().toISOString(),
-					profile: "publication-midpoint100k-som20x20-e10-seed42-v1",
-					source: {
-						kind: "publication",
-						inputFileCount: loaded.files.length,
-						sampleCount: ws.samples.length,
-						publication: { ...publication, verifiedFileCount: loaded.files.length },
-					},
-					sourceEventCount: ws.sourceEventCount,
-					sampling: ws.sampling,
-					settings: embeddingSettings(options, ws.n),
-					projectedEventCount: ws.n,
-					renderedEventCount: ws.n,
-					featureCount: ws.embedChannels.length,
-					features: ws.embedChannels.map((index) => ws?.channels[index] as string),
-					renderScope:
-						"Only the explicit systematic midpoint sample is gated, trained, projected and supplied to the renderer. View/filter visibility may vary; no rare-population or topology-preservation claim.",
-					gpu: {
-						adapterDescription: dev.description.trim() || null,
-						effectiveStorageWindowBytes: computeBinding,
-						deviceMaxStorageBindingBytes: limits.maxStorageBufferBindingSize,
-						deviceMaxBufferBytes: limits.maxBufferSize,
-					},
-					wallMs: {
-						input: inputMs,
-						parseTransformsGating: parseMs,
-						featurePreparation: timing.featurePreparationMs,
-						somTraining: timing.somTrainingMs,
-						mapEmbedProjection: timing.mapEmbedProjectionMs,
-						displayPreparation: displayMs,
-						total: totalMs,
-					},
-					timingScope:
-						"performance.now wall phases with queue drains, not GPU timestamps. Full-source download/hash verification precedes CPU decode/row selection and sampled GPU processing. No later interaction time included.",
-					gpuTimestampMeasurement: false,
-					resources: {
-						gpuMemoryBytes: null,
-						gpuUtilizationPercent: null,
-						browserMemoryBytes: null,
-						cpuUtilizationPercent: null,
-						scope: "Not instrumented; limits are not memory usage.",
+			const record: import("./computation.js").ComputationRecord = {
+				schemaVersion: 1,
+				completedAt: new Date().toISOString(),
+				profile: "publication-full-projection-som100k-20x20-e10-seed42-v1",
+				source: {
+					kind: "publication",
+					inputFileCount: publication.files.length,
+					sampleCount: ws.samples.length,
+					publication: {
+						...publication,
+						verifiedFileCount: cached ? 0 : publication.files.length,
+						verificationScope: cached
+							? "Derived cache integrity verified; original raw-input verification belongs to the retained computation."
+							: "All raw files SHA-256 verified during this load, from cache or network.",
 					},
 				},
-				$("computation-record"),
-			);
+				sourceEventCount: ws.sourceEventCount,
+				sampling: ws.sampling,
+				settings: embeddingSettings(options, ws.n),
+				projectedEventCount: ws.n,
+				renderedEventCount: ws.n,
+				featureCount: ws.embedChannels.length,
+				features: ws.embedChannels.map((index) => ws?.channels[index] as string),
+				renderScope:
+					"All source events are gated, projected and supplied to the renderer. Only SOM training has a 100,000-event cap. Filters and viewport affect visibility.",
+				gpu: {
+					adapterDescription: dev.description.trim() || null,
+					effectiveStorageWindowBytes: computeBinding,
+					deviceMaxStorageBindingBytes: limits.maxStorageBufferBindingSize,
+					deviceMaxBufferBytes: limits.maxBufferSize,
+					projectionBatchEventLimit: PROJECTION_BATCH_EVENTS,
+				},
+				wallMs: {
+					input: inputMs,
+					parseTransformsGating: parseMs,
+					featurePreparation: timing.featurePreparationMs,
+					somTraining: timing.somTrainingMs,
+					mapEmbedProjection: timing.mapEmbedProjectionMs,
+					displayPreparation: displayMs,
+					total: totalMs,
+				},
+				timingScope: cached
+					? "Cache restore/hash/upload and display wall time; no new SOM or embedding computation. Original computation timings are retained separately."
+					: "performance.now wall phases with queue drains, not GPU timestamps. All source events are projected; SOM training is capped. Cache persistence and later interaction time are excluded.",
+				cache: {
+					status: cached ? "hit" : "miss",
+					key: cacheKey,
+					...(cached
+						? {
+								originalCompletedAt: cached.computation.completedAt,
+								originalWallMs: cached.computation.wallMs,
+								originalGpu: cached.computation.gpu,
+							}
+						: {}),
+				},
+				gpuTimestampMeasurement: false,
+				resources: {
+					gpuMemoryBytes: null,
+					gpuUtilizationPercent: null,
+					browserMemoryBytes: null,
+					cpuUtilizationPercent: null,
+					scope: "Not instrumented; limits are not memory usage.",
+				},
+			};
+			publishComputationRecord(record, $("computation-record"));
 			currentBuffers = next;
 			next = null;
-			$("data-summary").textContent = `${ws.n.toLocaleString()} sampled events`;
+			$("data-summary").textContent = `${ws.n.toLocaleString()} events`;
 			$("data-summary").hidden = false;
 			$("sidebar").hidden = false;
 			$("loading-overlay").hidden = true;
 			console.log(
-				`Ready: ${ws.n} sampled events from ${ws.sourceEventCount} source events in ${(totalMs / 1000).toFixed(1)}s wall time`,
+				`Ready: ${ws.n} events in ${(totalMs / 1000).toFixed(1)}s wall time (${cached ? "cached map" : "computed"})`,
 			);
+			if (!cached) {
+				const readyWorkspace = ws;
+				void saveWorkspaceCache(
+					browserCache,
+					cacheKey,
+					publication,
+					device,
+					readyWorkspace,
+					record,
+					(reason) => {
+						if (record.cache) record.cache.error = reason;
+					},
+				)
+					.then((saved) => {
+						if (ws === readyWorkspace && !deviceLost && record.cache) {
+							record.cache.saved = saved;
+							publishComputationRecord(record, $("computation-record"));
+						}
+					})
+					.catch(() => {});
+			}
 		} catch (error) {
 			try {
 				clearMap();

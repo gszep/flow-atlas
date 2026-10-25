@@ -3,7 +3,7 @@
 The user-authorized public presentation surface is `https://flow.gszep.com`.
 It serves the browser prototype and the user-authorized publication companion dataset.
 The public entry automatically downloads the companion, shows a centered loading
-bar, and prepares a deterministic 100,000-event quick view with minimal controls.
+bar, trains on up to 100,000 events and projects the complete dataset with minimal controls.
 This is separate from the local agent studio described in `DELIVERY.md`.
 
 ## Publication boundary
@@ -63,19 +63,37 @@ unlisted data remain excluded. The companion snapshot has 33 FCS files containin
 3,885,530 events (290,739,412 FCS bytes) and a 5,102,255-byte WSP. The paper describes
 32 files; label the loaded companion version and its actual counts explicitly.
 Large data responses must stream rather than buffer whole files in the server.
-The complete source is downloaded and verified, then a deterministic 100,000-event
-sample is selected before GPU allocation, gating, training and projection. Displayed
-counts describe that sample, not whole-source frequencies or the paper's embedding.
+The complete source is downloaded and verified. All events are transformed, gated,
+projected and supplied to the renderer; only SOM training has a 100,000-event cap.
+These browser-prototype results are not a claim to reproduce the paper's embedding.
 `PUBLICATION_ROOT` is an explicitly supplied private source-directory binding,
 never an automatically scanned corpus or a path embedded in the public manifest.
 Omit the publication option only for a code-only package.
 
 Opening the page starts loading without a query parameter or button. Legacy query
-parameters do not restore the former full-data view. The quick profile uses a
-20-by-20 SOM, ten epochs and seed 42 on the selected sample. A compact sampled-event
-badge is visible; detailed computation/sampling metadata remain in the JSON record.
+parameters do not change the fixed profile. It uses a 20-by-20 SOM, ten epochs and
+seed 42. A compact event-count badge is visible; detailed computation metadata
+remain in the JSON record.
 Wall-clock phase timings are not isolated GPU timestamps, and uninstrumented
 memory/utilization fields remain unknown.
+
+## Browser cache
+
+An owned IndexedDB database keeps SHA-verified source files and one complete
+computed map (transformed columns, memberships, sample IDs, coordinates and
+metadata). A small manifest request still checks the dataset on each visit;
+this is not an offline-app guarantee. Raw cache entries are hash-verified before
+reuse. Computed cache keys bind source files, numerical/profile code, settings
+and window limits; cached metadata and buffer hashes are checked before upload.
+Changed inputs/settings and invalid or incomplete cache entries cause recomputation.
+Unavailable storage, quota failures and browser eviction degrade to normal loading.
+
+A warm map restore does not run SOM or EmbedSOM again. Its restore/display timings
+are separate from the original computation's retained timings and GPU information.
+First-load persistence finishes in the background; a very early reload can miss
+the computed cache. Native browser testing must wait for the completed cache write
+before asserting a warm hit. Cache bytes are a local optimization, not an independent
+scientific verification receipt.
 
 From that staged package, the authorized operator uses the approved named gcloud
 configuration and project binding:

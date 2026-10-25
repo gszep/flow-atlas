@@ -1,10 +1,37 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
 const pkg = (name: string) => fileURLToPath(new URL(`../${name}/src/index.ts`, import.meta.url));
+
+function engineId(): string {
+	const root = fileURLToPath(new URL("../../", import.meta.url)),
+		hash = createHash("sha256");
+	const add = (path: string) => {
+		if (statSync(join(root, path)).isDirectory()) {
+			for (const entry of readdirSync(join(root, path)).sort()) add(`${path}/${entry}`);
+		} else {
+			hash.update(`${path}\0`);
+			hash.update(readFileSync(join(root, path)));
+		}
+	};
+	for (const name of ["compute", "fcs", "wsp", "transforms"]) add(`packages/${name}/src`);
+	for (const path of [
+		"packages/ui/src/main.ts",
+		"packages/ui/src/workspace.ts",
+		"packages/ui/src/projection.ts",
+		"packages/ui/src/workspace-cache.ts",
+		"packages/ui/src/computation.ts",
+		"packages/ui/src/sampling.ts",
+		"packages/ui/src/publication.ts",
+		"pnpm-lock.yaml",
+	])
+		add(path);
+	return hash.digest("hex");
+}
 
 /** Dev-only: serve the FlowAtlas.jl oracle dataset at /oracle/ so `?oracle` auto-loads it. */
 function oraclePlugin(): Plugin {
@@ -44,6 +71,7 @@ function oraclePlugin(): Plugin {
 
 export default defineConfig({
 	base: "./",
+	define: { __FLOW_ATLAS_ENGINE_ID__: JSON.stringify(engineId()) },
 	server: { port: 3141 },
 	preview: { port: 3141 },
 	build: { target: "esnext" },
