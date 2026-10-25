@@ -1494,3 +1494,33 @@ tests and accepted bundles are unchanged from b16aa5a. Reuse the recorded runtim
 validation for that exact code, and run documentation lint/diff checks. The prior
 497-test local and 454-pass/10-private-oracle-skip CI evidence does not establish
 compatibility of the newly acquired case or validate the proposed human workflow.
+
+## 2026-10-25 — Priority public demo for expert feedback
+
+**Decision (explicit user deployment authority):** publish the current browser
+prototype at `flow.gszep.com` using the existing Sites Cloud Run / Cloud DNS path.
+This supersedes the earlier absence of a public deployment target for the browser
+only. It does not publish the local MCP/RPC studio or private experiment storage.
+Phase-one feature work is deferred behind this presentation task.
+
+The demo generates 3,072 synthetic events in the browser and runs the existing
+WebGPU pipeline with a small 8-by-8 SOM and five epochs. Working browser controls,
+separate delivered host capabilities and planned collective Verification/Discovery
+are visibly distinguished. User-selected files stay local; no acquired datasets,
+private oracle files, upload endpoint or bearer tokens enter the static package.
+No FlowJo/biological fidelity or human-verification effectiveness is inferred.
+
+**Verified source and measured checks:** independent review closed two static
+delivery defects (dotfile 404 handling and a test-fixture directory setup error).
+Thirteen scoped Node server/staging tests and one CPU synthetic-fixture test pass;
+lint, typecheck and UI build pass. Existing Chrome CDP visual QA exercised real
+WebGPU loading, repeated loading, colour/legend/size controls, an invalid-file
+error and recovery, and a 390-pixel responsive layout. No page errors, upload
+requests or production oracle fetches were observed. Original backend/kernels
+are unchanged, so unrelated local GPU suites are not rerun for this UI/static slice;
+the repository CI retains its normal broader validation.
+
+`PUBLIC_DEMO.md` specifies the public packaging boundary, dedicated build/runtime
+identities, scale-to-zero/max-one-instance bounds, clean-source artifact staging,
+release/asset hash checks and rollback. Served custom-domain HTTPS acceptance is
+separate from source review, CI, Cloud Run readiness and DNS record creation.

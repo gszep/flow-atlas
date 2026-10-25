@@ -18,6 +18,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: node --test --test-concurrency=1 deploy/static-server.test.mjs
+        env:
+          NODE_OPTIONS: --max-old-space-size=512
+      - run: pnpm --filter @flow-atlas/ui build
+        env:
+          NODE_OPTIONS: --max-old-space-size=768
+          GOMAXPROCS: '1'
       - run: pnpm --filter @flow-atlas/host build
       - run: pnpm --filter @flow-atlas/host test:built
         env:

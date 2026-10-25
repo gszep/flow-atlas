@@ -1,13 +1,17 @@
 # flow-atlas
 
-_High-dimensional flow cytometry analysis in the browser, with agents._
+_Agentic cytometry with a collective human verification and discovery layer._
 
 Successor to [FlowAtlas.jl](https://github.com/gszep/FlowAtlas.jl) ([paper](https://doi.org/10.3389/fimmu.2024.1425488)).
-Goal: a zero-install, WebGPU-native, open-source cytometry workspace that (Phase 1) reproduces FlowAtlas.jl
-without Julia, exposes the whole workflow to coding agents via MCP, and (Phase 2) replaces FlowJo entirely.
+The current direction is archived-data verification and discovery first, then live
+scientific workflows; see [`docs/phase-one-plan.md`](docs/phase-one-plan.md).
 
-**Status: Phase 1 prototype.** Loads a FlowJo workspace + FCS files entirely in the browser, transforms,
-gates (exact parity with FlowAtlas.jl), trains a SOM, embeds with EmbedSOM and renders the map on WebGPU.
+**Browser prototype:** loads a FlowJo workspace + FCS files locally, transforms and
+gates, trains a SOM, embeds with EmbedSOM and renders on WebGPU. The public demo at
+[flow.gszep.com](https://flow.gszep.com) includes a small synthetic example and clearly
+separates implemented capabilities from the planned collective-review workflow.
+Browser plots are not views of the separate host's analysis receipts or a claim
+of general FlowJo interpretation/biological fidelity.
 Start with [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/decisions.md`](docs/decisions.md); agents read [`AGENTS.md`](AGENTS.md).
 
 ```sh
@@ -21,6 +25,7 @@ Requires a WebGPU browser (Chrome/Edge 113+). `?oracle=N` loads the first N orac
 For agent-driven native analysis, use the local studio workflow in
 `packages/host/README.md`. Build, served-version acceptance and rollback are
 documented in `docs/DELIVERY.md`.
+Public static-demo hosting is documented in [`docs/PUBLIC_DEMO.md`](docs/PUBLIC_DEMO.md).
 
 ## Packages
 
