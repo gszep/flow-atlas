@@ -1438,3 +1438,59 @@ Checks used nice+10, one test worker, bounded native threads, 180-second command
 90-second no-output deadlines and a 2-GiB sampled process-group ceiling. No limit
 terminated the successful run. Source review is closed; final-head CI and
 merged-source acceptance remain separately recorded delivery gates.
+
+## 2026-10-25 — Phase-one archive and review-context execution
+
+**Decision (user-authorized direction):** retain Verification and Discovery as
+complementary participation modes, with archived-data phase one preparing for
+live scientific workflows in phase two. Open participation and evaluated
+task-specific capability do not depend on institutional credentials. The initial
+implementation sequence is recorded in `phase-one-plan.md`; it does not launch
+public reputation, financial infrastructure or instrument control.
+
+**Verified source audit at b16aa5a:** the host has content-bound inputs, revisioned
+model snapshots, explicit numerical profiles and receipts. Its browser prototype
+instead imports and computes independently, including display-space gating; it is
+not a viewer of host results. Public gate summaries omit full geometry and
+dependencies. Connect one real archived case to bounded read-only context before
+building scientific review plots; do not treat the existing embedding display as
+verification of a host receipt or assume nonlinear polygon transforms preserve
+membership. No particular real-data numerical disagreement was measured by this audit.
+
+**Literature evidence and limits:** primary studies motivate explicit verification
+costs, retained disagreement and evaluation against both solo baselines; they do
+not validate a universal mobile review interface or reputation algorithm. Adaptive
+reuse, correlated agent errors and circular confirmation remain evaluation design
+concerns. Stop general literature iteration now and reopen only for a named
+implementation blocker or observed pilot failure. CytoWeave, the Burns/Samusik
+experiment and Robin/Finch are existing agentic-cytometry evaluation comparators;
+the project makes no first-benchmark claim. Source links are in the phase-one plan.
+
+**Measured acquisition checkpoint:** a bounded public batch acquired 13 read-only
+files totaling 48,974,768 bytes, with zero failures and matching published size/MD5
+checks plus recorded local SHA-256. The corpus remains outside Git and is not an
+ingested benchmark. Raw workspace, gate-archive and FCS availability does not
+establish semantic compatibility, reference-label independence or numerical fidelity.
+Cloud storage is an eligible user-selected destination, not a provisioned service.
+Per-run storage budgets and private account/project bindings remain outside shared
+runtime policy. No data or compute is silently moved to an unrelated cloud project.
+
+**Measured first intake, not materializer acceptance:** one public ICS screen-1
+FCS imported and inspected through the accepted compiled MCP host, with matching
+content hash, 768,163 bytes, 12,731 events and 15 channels. A corrected metadata
+probe completed in 0.85 s at approximately 133 MiB peak RSS; its earlier invalid
+keyword-limit/response-parsing failure is retained as a harness failure.
+No materialization or numerical job ran. Independent review identified ALS WSP
+sample 84 as a candidate, not a verified binding: archive filename, `$FIL` and
+WSP basename differ; another workspace shares the basename; one channel differs
+by underscore/slash; selected WSP counts are not yet retained. Source inspection
+predicts unsupported selected constructs, but no API rejection was observed.
+The exact-name rule was a conservative probe hypothesis, not user policy. Next
+work is an explicit candidate-binding/alias and structural-compatibility check,
+without silently normalizing names or broadening coordinate interpretation.
+
+**Validation scope for this plan:** documentation only; runtime sources, lockfile,
+tests and accepted bundles are unchanged from b16aa5a. Reuse the recorded runtime
+validation for that exact code, and run documentation lint/diff checks. The prior
+497-test local and 454-pass/10-private-oracle-skip CI evidence does not establish
+compatibility of the newly acquired case or validate the proposed human workflow.

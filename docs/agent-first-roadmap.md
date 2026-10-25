@@ -1,5 +1,21 @@
 # Agent-first cytometry capability roadmap
 
+## Current initiative: collective verification and discovery (2026-10-25)
+
+The user-confirmed objective is **agentic cytometry with a collective human
+verification and discovery layer**. Archived data is phase one's proving ground;
+live scientific workflows are phase two. The bounded implementation sequence,
+claim/evidence contracts and acceptance criteria are in
+[the phase-one plan](phase-one-plan.md). This is the current priority ordering;
+the historical capability inventory below is not a current implementation checklist.
+
+The code audit supports keeping the host's identity, revision, numerical and
+receipt foundations. The browser prototype is a separate analysis path and must
+not be presented as a view of host-bound scientific evidence. Prioritize one real
+source pair and one faithful reviewable context over additional kernels, a voting
+platform or new live-lab integrations. Verification and Discovery remain distinct
+tracks; participation and demonstrated task capability do not require credentials.
+
 ## Product objective
 
 The user clarified on 2026-10-17: Flow Atlas should make every useful FlowJo
