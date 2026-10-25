@@ -1,0 +1,325 @@
+{
+	"schemaVersion": 1,
+	"id": "flowatlas-publication-companion-v1",
+	"title": "FlowAtlas publication companion dataset",
+	"citation": {
+		"title": "FlowAtlas publication companion dataset",
+		"doi": "10.3389/fimmu.2024.1425488",
+		"url": "https://doi.org/10.3389/fimmu.2024.1425488"
+	},
+	"sourceVersion": "local-companion-2026-10-25",
+	"sampleCount": 33,
+	"eventCount": 3885530,
+	"totalBytes": 295841667,
+	"files": [
+		{
+			"path": "workspace.wsp",
+			"name": "workspace.wsp",
+			"kind": "wsp",
+			"bytes": 5102255,
+			"sha256": "00796effe02b7a4702e136fe87132a975d06b5e65f1856a95732573e284ac70c"
+		},
+		{
+			"path": "390C/390C_BM_027.fcs",
+			"name": "390C_BM_027.fcs",
+			"kind": "fcs",
+			"bytes": 2812252,
+			"sha256": "b0f696ed926aab3396126343167a63f4f728a256c535c78f61ed8e6d2daf95a9",
+			"events": 36948,
+			"channels": 19
+		},
+		{
+			"path": "390C/390C_Ileum_028.fcs",
+			"name": "390C_Ileum_028.fcs",
+			"kind": "fcs",
+			"bytes": 64137,
+			"sha256": "f02e50b9b200c6e782ba3da9bd38b893ccc9fe7e896752fe01534a46f5ef095e",
+			"events": 790,
+			"channels": 19
+		},
+		{
+			"path": "390C/390C_Liver_026.fcs",
+			"name": "390C_Liver_026.fcs",
+			"kind": "fcs",
+			"bytes": 426957,
+			"sha256": "4aa2d8e4f4e5a403674ce3d7d44dd84d91087d59d26a3c0c17575034db29ed4b",
+			"events": 5564,
+			"channels": 19
+		},
+		{
+			"path": "390C/390C_Lung_029.fcs",
+			"name": "390C_Lung_029.fcs",
+			"kind": "fcs",
+			"bytes": 1469427,
+			"sha256": "1624430186e467911b3036af5e3e0a3a09107ff08617af0b395cbe931bec203f",
+			"events": 19281,
+			"channels": 19
+		},
+		{
+			"path": "390C/390C_Spleen_025.fcs",
+			"name": "390C_Spleen_025.fcs",
+			"kind": "fcs",
+			"bytes": 10649019,
+			"sha256": "09f021fa881d6a8eb40302f93ec277b67ece333e93f474fa5e6e0b393fdc6284",
+			"events": 140065,
+			"channels": 19
+		},
+		{
+			"path": "390C/390C_mLN_024.fcs",
+			"name": "390C_mLN_024.fcs",
+			"kind": "fcs",
+			"bytes": 5472062,
+			"sha256": "614670b8d74e93c2bc350e7908a5f26c45bac9ffc210ba759913e9cea1353e0e",
+			"events": 71947,
+			"channels": 19
+		},
+		{
+			"path": "390C/390C_tLN_023.fcs",
+			"name": "390C_tLN_023.fcs",
+			"kind": "fcs",
+			"bytes": 8773461,
+			"sha256": "e3fd3381b432bba3a3bd4e0ff0aa37bebe0e935581c9e46c0c7192efbec6e96a",
+			"events": 115385,
+			"channels": 19
+		},
+		{
+			"path": "403C/403C_donor_BM_024.fcs",
+			"name": "403C_donor_BM_024.fcs",
+			"kind": "fcs",
+			"bytes": 18279996,
+			"sha256": "e0380e1b485db1c53b6cc5481988e79a2a784d716e6c1e65d524c63268497352",
+			"events": 253834,
+			"channels": 18
+		},
+		{
+			"path": "403C/403C_donor_Liver_025.fcs",
+			"name": "403C_donor_Liver_025.fcs",
+			"kind": "fcs",
+			"bytes": 7574537,
+			"sha256": "5c99dc5916d530832b839f391b5169bddd5136b0279fa980d6c6e5f1543281a9",
+			"events": 105147,
+			"channels": 18
+		},
+		{
+			"path": "403C/403C_donor_Lung_026.fcs",
+			"name": "403C_donor_Lung_026.fcs",
+			"kind": "fcs",
+			"bytes": 2474558,
+			"sha256": "5ddbb9566748fc39286210dbbd9c5a4d95f0620d8e06cb09646a690a56f02cce",
+			"events": 34314,
+			"channels": 18
+		},
+		{
+			"path": "403C/403C_donor_Spleen_022.fcs",
+			"name": "403C_donor_Spleen_022.fcs",
+			"kind": "fcs",
+			"bytes": 12474859,
+			"sha256": "e28aa7cb2a2767d6cdee00ee89222d2b2eaa0e5f2d064ffd129543feadfd3556",
+			"events": 173207,
+			"channels": 18
+		},
+		{
+			"path": "403C/403C_donor_mLN_027.fcs",
+			"name": "403C_donor_mLN_027.fcs",
+			"kind": "fcs",
+			"bytes": 17355518,
+			"sha256": "10052eb682003858614d211a0a62b7658ca199d5dd7a60f8694edd96b5fc8bd1",
+			"events": 240994,
+			"channels": 18
+		},
+		{
+			"path": "403C/403C_donor_tLN_028.fcs",
+			"name": "403C_donor_tLN_028.fcs",
+			"kind": "fcs",
+			"bytes": 26369126,
+			"sha256": "43dbf698b99a01692665878ad7dfc06ce6403eac37122089175d47fe8df2e6a5",
+			"events": 366183,
+			"channels": 18
+		},
+		{
+			"path": "412C/412C_BM_032.fcs",
+			"name": "412C_BM_032.fcs",
+			"kind": "fcs",
+			"bytes": 1751819,
+			"sha256": "1342f57804382768142284d731c4d3ce6f8dc877a5b18a79d705969aba53bd98",
+			"events": 22999,
+			"channels": 19
+		},
+		{
+			"path": "412C/412C_Blood_025.fcs",
+			"name": "412C_Blood_025.fcs",
+			"kind": "fcs",
+			"bytes": 3588627,
+			"sha256": "bc707339f79d21130ec83e0f89f1a34634d6ab3e3a343b91cf1bd303ddb18a2b",
+			"events": 47167,
+			"channels": 19
+		},
+		{
+			"path": "412C/412C_Ileum_027.fcs",
+			"name": "412C_Ileum_027.fcs",
+			"kind": "fcs",
+			"bytes": 50369,
+			"sha256": "32512777391c5a84b4cf16f45de8bdf2bbec981f093271f49c895b9b90dcf07b",
+			"events": 609,
+			"channels": 19
+		},
+		{
+			"path": "412C/412C_Liver_033.fcs",
+			"name": "412C_Liver_033.fcs",
+			"kind": "fcs",
+			"bytes": 8232266,
+			"sha256": "a5ea7e9a88334d760afb66b95fe7e4624fb297fe7685fb3b77a847eb5fc6f230",
+			"events": 108268,
+			"channels": 19
+		},
+		{
+			"path": "412C/412C_Spleen_029.fcs",
+			"name": "412C_Spleen_029.fcs",
+			"kind": "fcs",
+			"bytes": 25297009,
+			"sha256": "7b6200fda58a98e3f1dcf947ea97fae5196d53457a7c4919beb71e3a155c728b",
+			"events": 332804,
+			"channels": 19
+		},
+		{
+			"path": "412C/412C_mLN_026.fcs",
+			"name": "412C_mLN_026.fcs",
+			"kind": "fcs",
+			"bytes": 900163,
+			"sha256": "728e645d60272c44a7a72297ed640c690081058c7b7e8f365b31e7a66a671ff5",
+			"events": 11791,
+			"channels": 19
+		},
+		{
+			"path": "412C/412C_tLN_034.fcs",
+			"name": "412C_tLN_034.fcs",
+			"kind": "fcs",
+			"bytes": 6714924,
+			"sha256": "4ed4af4445453ed2c94949792b7dfb0a5d0595ecc65262dd53e33d44602f2fc1",
+			"events": 88303,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_BM_028.fcs",
+			"name": "423_Donor_BM_028.fcs",
+			"kind": "fcs",
+			"bytes": 10220452,
+			"sha256": "77a38338329830c7662269d9a4de6178697e8a814398a76ac1214f5f6a89d466",
+			"events": 134426,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_Blood_023.fcs",
+			"name": "423_Donor_Blood_023.fcs",
+			"kind": "fcs",
+			"bytes": 18579857,
+			"sha256": "3bb47b9f0abecf20a7e17fa2135d2b6427f5cc41446450f4686cb87bcc3307be",
+			"events": 244418,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_Ileum_033.fcs",
+			"name": "423_Donor_Ileum_033.fcs",
+			"kind": "fcs",
+			"bytes": 220526,
+			"sha256": "4bf57e49f184639c69253398193d4971d3acfe3bf0c0f43c613d14c33914bd0a",
+			"events": 2848,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_Liver_022.fcs",
+			"name": "423_Donor_Liver_022.fcs",
+			"kind": "fcs",
+			"bytes": 781787,
+			"sha256": "7d75d9d02663fa244b1f88e58fef3cd824fc5aa21bac2965d50f31fe0b6e5ede",
+			"events": 10231,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_Lung_032.fcs",
+			"name": "423_Donor_Lung_032.fcs",
+			"kind": "fcs",
+			"bytes": 399198,
+			"sha256": "6ea59ed3dcfdd4d394c82916d517370cdc71cde221560302ea3a6016660f826e",
+			"events": 5199,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_Spleen_026.fcs",
+			"name": "423_Donor_Spleen_026.fcs",
+			"kind": "fcs",
+			"bytes": 28883628,
+			"sha256": "261899958210ff9990fcafb61f95e91bdb279f410cd84fa05bbb40ba6453a537",
+			"events": 379994,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_mLN_029.fcs",
+			"name": "423_Donor_mLN_029.fcs",
+			"kind": "fcs",
+			"bytes": 4202124,
+			"sha256": "6e2956dbd314ca6af1a8c980d85d9f927b9cf9bb928e1965845c0f978d06f3dc",
+			"events": 55235,
+			"channels": 19
+		},
+		{
+			"path": "423C/423_Donor_tLN_030.fcs",
+			"name": "423_Donor_tLN_030.fcs",
+			"kind": "fcs",
+			"bytes": 13345852,
+			"sha256": "a89beb8db7d26b1caebef66f43755bf929045d8d38e0b31f7c41974e63471336",
+			"events": 175547,
+			"channels": 19
+		},
+		{
+			"path": "428C/428_Donor_BM_026.fcs",
+			"name": "428_Donor_BM_026.fcs",
+			"kind": "fcs",
+			"bytes": 7895175,
+			"sha256": "cca9fcd515b06d950cede65a699e9105de89b1f018c258041fad0e32f7755176",
+			"events": 103830,
+			"channels": 19
+		},
+		{
+			"path": "428C/428_Donor_Ileum_030.fcs",
+			"name": "428_Donor_Ileum_030.fcs",
+			"kind": "fcs",
+			"bytes": 1140432,
+			"sha256": "290025e92ef215b0b88a484226cdb3d2ddf8602c177f4b74ed63332a3f56eae5",
+			"events": 14952,
+			"channels": 19
+		},
+		{
+			"path": "428C/428_Donor_Lung_029.fcs",
+			"name": "428_Donor_Lung_029.fcs",
+			"kind": "fcs",
+			"bytes": 954608,
+			"sha256": "025351dc5e75005d523ec41463943544e0a7faf8356cdb1667ae2734894e844a",
+			"events": 12507,
+			"channels": 19
+		},
+		{
+			"path": "428C/428_Donor_Spleen_024.fcs",
+			"name": "428_Donor_Spleen_024.fcs",
+			"kind": "fcs",
+			"bytes": 26575922,
+			"sha256": "f7a9f4561c21e4936acd988e4706e9e373d573ac99bd69e541ff2570db4a436b",
+			"events": 349629,
+			"channels": 19
+		},
+		{
+			"path": "428C/428_Donor_tLN_027.fcs",
+			"name": "428_Donor_tLN_027.fcs",
+			"kind": "fcs",
+			"bytes": 16808765,
+			"sha256": "a2f59ac10913a7a26e1f3b01fb6ed2961d3fde64d8309424dc841a95f9962ebe",
+			"events": 221114,
+			"channels": 19
+		}
+	],
+	"notes": [
+		"The source paper describes 32 files; this companion copy contains 33.",
+		"Event and channel counts were read from FCS 3.1 TEXT metadata only; no event data was decoded or modified.",
+		"Files are served verbatim from the FlowAtlas.jl data snapshot under the explicit publication authorization covering this dataset; all other corpus files remain private."
+	]
+}

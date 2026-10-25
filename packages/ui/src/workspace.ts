@@ -239,6 +239,12 @@ export interface EmbedOptions {
 	seed?: number;
 	trainMax?: number;
 }
+export interface EmbeddingWallTimings {
+	featurePreparationMs: number;
+	somTrainingMs: number;
+	mapEmbedProjectionMs: number;
+	boundsReadbackMs: number;
+}
 
 export async function computeEmbedding(
 	device: GPUDevice,
@@ -246,7 +252,8 @@ export async function computeEmbedding(
 	w: LoadedWorkspace,
 	progress: Progress,
 	opts: EmbedOptions = {},
-): Promise<void> {
+): Promise<EmbeddingWallTimings> {
+	const featureStarted = performance.now();
 	const k = new Kernels(device);
 	const d = w.embedChannels.length;
 	if (d === 0) throw new Error("no channels selected for embedding");
@@ -302,6 +309,8 @@ export async function computeEmbedding(
 	const xdim = opts.xdim ?? 20;
 	const ydim = opts.ydim ?? 20;
 	let som = initSom(d, means, sds, xdim, ydim, opts.seed ?? 42);
+	await device.queue.onSubmittedWorkDone();
+	const featurePreparationMs = performance.now() - featureStarted;
 	const t0 = performance.now();
 	som = await trainSom(
 		k,
@@ -311,12 +320,17 @@ export async function computeEmbedding(
 		{ epochs: opts.epochs ?? 20, trainMax: opts.trainMax ?? 500_000, seed: opts.seed ?? 42 },
 		(p) => progress(`SOM epoch ${p.epoch}/${p.epochs} (radius ${p.radius.toFixed(2)})`),
 	);
+	await device.queue.onSubmittedWorkDone();
+	const somTrainingMs = performance.now() - t0;
 	progress(`SOM trained in ${((performance.now() - t0) / 1000).toFixed(1)}s; mapping + embedding`);
+	const projectionStarted = performance.now();
 	await yieldToUi();
 	w.som = som;
 	w.bmu = mapToSom(k, features, som, maxBinding);
 	w.embedding = embedSom(k, features, som, maxBinding);
 	await device.queue.onSubmittedWorkDone();
+	const mapEmbedProjectionMs = performance.now() - projectionStarted;
+	const boundsStarted = performance.now();
 	// Bounds from a strided readback.
 	const emb = await readback(device, w.embedding, Float32Array, Math.min(w.n, 500_000) * 8);
 	let minX = Number.POSITIVE_INFINITY;
@@ -343,4 +357,10 @@ export async function computeEmbedding(
 	progress(
 		`embedding ready: ${w.n.toLocaleString()} events in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
 	);
+	return {
+		featurePreparationMs,
+		somTrainingMs,
+		mapEmbedProjectionMs,
+		boundsReadbackMs: performance.now() - boundsStarted,
+	};
 }

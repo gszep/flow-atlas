@@ -8,6 +8,8 @@ This phase vocabulary supersedes the historical parity/replacement phase labels 
 ## Objective and retained foundations
 
 - Deliver one real archival claim through intake, host-bound evidence, bounded human judgment and replay.
+- Spectral flow is the primary scientific direction; the conventional-flow companion remains an interoperability/performance baseline.
+- Instrument-aware panel design is a proposed outcome: biological question to candidate panels and discriminating validation, not a delivered optimizer or hardware twin.
 - Maintain Verification (predefined assertions) and Discovery (candidates plus next discriminating tests).
 - Configure and record the exploration/exploitation mix per run; do not prescribe a universal ratio.
 - Let citizens contribute judgments, agents and compute; donated compute does not confer trusted votes.

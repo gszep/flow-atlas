@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content="Flow Atlas: an interactive synthetic WebGPU cytometry prototype and a vision for agentic verification and discovery." />
+<meta name="description" content="Explore the FlowAtlas publication companion dataset: 3.89 million events in a browser WebGPU prototype." />
 <title>Flow Atlas — prototype &amp; vision</title>
 <link rel="stylesheet" href="/src/style.css" />
 </head>
@@ -12,15 +12,26 @@
 	<aside id="sidebar">
 		<h1>Flow Atlas <small>public prototype</small></h1>
 		<section class="overview" aria-labelledby="intro-title">
-			<h2 id="intro-title">Explore the current prototype</h2>
-			<p>A local, interactive view of cytometry populations. Try the generated example below—no data download or account needed.</p>
+			<h2 id="intro-title">Explore the publication dataset</h2>
+			<p>Load the FlowAtlas publication companion into this browser: 3,885,530 events across 33 samples, with no event downsampling or account needed.</p>
+			<p><a id="publication-citation" href="https://doi.org/10.3389/fimmu.2024.1425488" target="_blank" rel="noopener noreferrer">FlowAtlas publication · Frontiers in Immunology (2024)</a><br><span class="muted">Publication exploration with coauthor Val Coppard.</span></p>
 			<h3>Current browser</h3>
 			<p>Local WSP/FCS loading, WebGPU gating, SOM and EmbedSOM, with population colours and marker views. This is an exploratory visual prototype, not a host-receipt-backed verification plot.</p>
 			<p class="muted"><strong>Separate host backend:</strong> agent/MCP tools for immutable inputs, explicit analysis and receipts are delivered, but are not connected to this page.</p>
 		</section>
 		<section id="load">
-			<button id="load-demo" type="button" disabled aria-describedby="demo-note gpu-info">Load synthetic demo</button>
-			<p id="demo-note" class="muted">3,072 generated events · 3 artificial populations · no biological validation.</p>
+			<button id="load-publication" type="button" disabled aria-describedby="publication-note publication-training gpu-info">Load publication dataset</button>
+			<label for="publication-training-mode">SOM training for the next publication load</label>
+			<select id="publication-training-mode" disabled aria-describedby="publication-training">
+				<option value="limited">Up to 100,000 events (faster training)</option>
+				<option value="all">All events per SOM training epoch (slower)</option>
+			</select>
+			<p id="publication-note" class="muted">About 296 MB (282 MiB) to download · 3,885,530 events · 33 samples. The paper describes 32 files; this companion copy contains 33. No canonical-figure parity is inferred.</p>
+			<p id="publication-training" class="muted">Public-demo profile: 20×20 SOM, 10 epochs, training cap 100,000, seed 42. All events are mapped and embedded. This is not the paper's embedding reproduction; sufficient browser/GPU memory is required.</p>
+			<details class="technical-example"><summary>Technical test example</summary>
+				<button id="load-demo" type="button" disabled aria-describedby="demo-note gpu-info">Load synthetic demo</button>
+				<p id="demo-note" class="muted">Small technical check only: 3,072 generated events, three artificial populations. Not publication data or biological validation.</p>
+			</details>
 			<label for="files">Or open your own WSP and matching FCS files</label>
 			<input id="files" type="file" multiple accept=".wsp,.fcs" disabled aria-describedby="privacy-note gpu-info" />
 			<p id="privacy-note" class="muted">You can also drop files or a folder. Selected files stay in your browser and are never uploaded. Large datasets may exceed browser/device memory.</p>
@@ -32,6 +43,12 @@
 			</div>
 		</section>
 		<p id="status" role="status" aria-live="polite" aria-atomic="true">Preparing the browser prototype.</p>
+		<p id="active-profile" class="muted"></p>
+		<section id="computation-summary" hidden aria-labelledby="computation-title">
+			<h2 id="computation-title">Computation summary</h2>
+			<p class="muted">Measured browser wall time with GPU queue completion—not GPU timestamp/kernel time. Device limits are not memory usage. All events are projected regardless of the training selection; codebook initialization mean/SD statistics remain strided in both training modes.</p>
+			<dl id="computation-details"></dl>
+		</section>
 		<section id="controls" hidden>
 			<label>Colour by <select id="colour-by"></select></label>
 			<label>Marker size <input id="size" type="range" min="0.5" max="6" step="0.1" value="1.5" /></label>
@@ -44,15 +61,16 @@
 			<p><strong>Discovery:</strong> help people and agents investigate questions together, retaining uncertainty and disagreement.</p>
 			<p><span class="planned">Planned, not yet implemented</span> Collective and mobile verification, starting with archived-data workflows and working towards a live scientific loop.</p>
 		</section>
-		<p class="disclaimer">Illustrative software, not a clinical tool. No FlowJo parity, biological validation or production-readiness claim.</p>
+		<p class="disclaimer">Browser prototype, not a clinical tool or host-receipt-backed analysis. FlowJo interpretation and numerical parity are unvalidated.</p>
 	</aside>
 	<main id="map" aria-label="Interactive population map">
 		<canvas id="canvas" aria-label="SOM/EmbedSOM scatter plot; population counts and colour controls are in the sidebar"></canvas>
-		<div id="map-empty"><h2>A small example. A larger direction.</h2><p id="map-empty-detail">Load the synthetic demo to explore three artificial populations using the existing WebGPU pipeline.</p></div>
+		<div id="map-empty"><h2>3.89 million publication events.</h2><p id="map-empty-detail">Load the full publication companion to explore its populations. The download is about 296 MB; every file is length- and SHA-256-verified before processing.</p></div>
 		<p id="data-summary">No data loaded · all processing stays in this browser</p>
 		<p id="map-help">Drag to pan · scroll to zoom · adjust colour and marker size in the sidebar</p>
 	</main>
 </div>
+<script id="computation-record" type="application/json"></script>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

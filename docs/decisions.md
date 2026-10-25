@@ -1524,3 +1524,60 @@ the repository CI retains its normal broader validation.
 identities, scale-to-zero/max-one-instance bounds, clean-source artifact staging,
 release/asset hash checks and rollback. Served custom-domain HTTPS acceptance is
 separate from source review, CI, Cloud Run readiness and DNS record creation.
+
+## 2026-10-25 — Publication data becomes the primary public demo
+
+**Authority:** the user explicitly requested the full dataset from the FlowAtlas
+publication instead of the synthetic example. This supersedes the prior static
+demo's exclusion of these exact companion WSP/FCS files only; it does not authorize
+publishing unrelated acquired corpora, experiments or credentials. The original
+`FlowAtlas.jl` files remain unchanged and outside Git.
+
+**Measured metadata:** the local companion copy contains 33 FCS files with a total
+of 3,885,530 declared events; FCS bytes total 290,739,412 and the workspace is
+5,102,255 bytes. The largest FCS is 28,883,628 bytes. The paper describes 32 files;
+the UI and manifest must disclose the actual companion version/count rather than
+silently omit a file or assert exact reproduction of the published figures.
+
+**Bounded implementation:** pin exact dataset file hashes/sizes in a metadata-only
+manifest. Stage only those files through an explicit publication-source option;
+ordinary static staging continues to reject arbitrary WSP/FCS/private directories.
+Stream large responses within the existing 256-MiB Cloud Run service. Browser
+loading verifies files with bounded download concurrency and progress. No event
+subsample is substituted for the full requested dataset. Codebook training limits
+are disclosed separately from projecting/rendering all loaded events. Scientific
+host kernels/defaults and the existing explicit coordinate contracts are unchanged.
+
+The user also authorized showing this demo on Artemis, superseding the earlier
+no-contact hold for that specific task only. The first SSH attempt timed out and
+Tailscale reported that peer offline; no remote process or workload was changed.
+Public-site work proceeds independently while the host is unreachable.
+
+**Measured full-dataset preview:** once Artemis became reachable, an isolated,
+user-supervised FlowAtlas static service served the exact publication package on
+localhost. Existing Chrome/WebGPU loaded all 3,885,530 events and 33 samples in
+19.6 s before phase instrumentation. No unrelated remote workload was changed.
+
+The instrumented serial comparison on an NVIDIA RTX 5000 Ada Generation Laptop
+GPU (16,376 MiB reported capacity, driver 595.99.02) used the same 20-by-20 SOM,
+ten epochs, seed 42 and 20 features. Limited training reported 0.600 s training /
+15.188 s total; all-event training reported 18.236 s training / 28.849 s total.
+These are one run per mode, shared-GPU, cache-influenced browser wall-clock phases,
+not isolated GPU timings, a quality comparison or a general hardware benchmark.
+All-event mode has training stride one; initialization mean/SD still use stride
+19 over 204,501 rows. Both pass all events to projection and the renderer; filters
+and viewport affect visibility. Peak memory and utilization were not instrumented.
+
+**Independent publication review:** fixed client-disconnect handling that could
+raise a second-header error, per-server allowlist isolation, and a staging race
+that could copy bytes different from the pinned manifest. Tiny regressions were
+independently reproduced and then verified closed. All 34 current source payload
+hashes/sizes were independently checked with zero mismatches. Initial placeholder
+hash entries created during drafting were discarded before staging; only hashes
+computed from actual source bytes are retained. Original source data are untouched.
+
+**Scientific direction clarified by the user:** prioritize spectral flow, including
+instrument-aware panel design from biological intent and experimental verification.
+The current conventional-flow demo is a baseline, not spectral validation. The
+34-parameter panel paper's MS example and its raw-data acquisition are separate
+work; neither this dataset nor this embedding substitutes for those samples.
