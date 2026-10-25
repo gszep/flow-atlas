@@ -8,13 +8,13 @@ scientific workflows; see [`docs/phase-one-plan.md`](docs/phase-one-plan.md).
 
 **Browser prototype:** loads a FlowJo workspace + FCS files locally, transforms and
 gates, trains a SOM, embeds with EmbedSOM and renders on WebGPU. The public demo at
-[flow.gszep.com](https://flow.gszep.com/?publication) loads the full publication companion dataset and clearly
-separates implemented capabilities from the planned collective-review workflow.
+[flow.gszep.com](https://flow.gszep.com/) automatically loads the publication
+companion and uses a deterministic 100,000-event sample for its quick map.
 Browser plots are not views of the separate host's analysis receipts or a claim
 of general FlowJo interpretation/biological fidelity.
-The companion contains 3,885,530 events across 33 FCS files. Choose all-event SOM
-training in the UI, or use `?publication&training=all`; the computation panel shows
-algorithm settings, browser wall-clock phase timings and device information.
+The source companion contains 3,885,530 events across 33 FCS files. A centered
+progress bar shows loading; the map retains colour, marker-size and population
+controls. Run metadata remain machine-readable without a prose-heavy sidebar.
 Start with [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/decisions.md`](docs/decisions.md); agents read [`AGENTS.md`](AGENTS.md).
 
 ```sh

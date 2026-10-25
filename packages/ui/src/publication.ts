@@ -5,23 +5,6 @@ export const PUBLICATION_EMBED_OPTIONS = Object.freeze({
 	trainMax: 100000,
 	seed: 42,
 });
-export type PublicationTraining = "limited" | "all";
-export function publicationTrainingMode(search: string): PublicationTraining {
-	return new URLSearchParams(search).get("training") === "all" ? "all" : "limited";
-}
-export function publicationTrainingOptions(eventCount: number, mode: PublicationTraining) {
-	if (!Number.isSafeInteger(eventCount) || eventCount < 1)
-		throw new Error("Publication training requires a positive safe event count");
-	return {
-		...PUBLICATION_EMBED_OPTIONS,
-		trainMax: mode === "all" ? eventCount : PUBLICATION_EMBED_OPTIONS.trainMax,
-	};
-}
-export function publicationProfileLabel(eventCount: number, mode: PublicationTraining): string {
-	return `Publication demo profile: 20×20 SOM · 10 epochs · ${mode === "all" ? `all ${eventCount.toLocaleString()} events per SOM training epoch (stride 1)` : "up to 100,000 per training epoch (configured window-local sampler)"} · seed 42. Initialization mean/SD statistics remain strided. All events are mapped and embedded; not a reproduction of the paper embedding.`;
-}
-export const PUBLICATION_PROFILE_LABEL =
-	"Publication demo profile: 20×20 SOM · 10 epochs · training cap 100,000 · seed 42. All events are mapped and embedded; this is not a reproduction of the paper embedding.";
 const MAX_FILE = 64 * 2 ** 20;
 const MAX_TOTAL = 512 * 2 ** 20;
 const MAX_MANIFEST = 256 * 1024;

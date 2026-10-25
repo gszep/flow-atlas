@@ -1,3 +1,4 @@
+import type { SamplingSummary } from "./sampling.js";
 import type { EmbedOptions } from "./workspace.js";
 
 export interface WallPhases {
@@ -25,6 +26,7 @@ export function embeddingSettings(options: EmbedOptions, eventCount: number) {
 		initializationStatsRows: Math.floor(eventCount / initializationStride),
 		training: {
 			scope: "per-SOM-training-epoch",
+			eventScope: "selected-input-rows",
 			mode: trainMax >= eventCount ? "all-events" : "bounded",
 			trainMax,
 			stride: Math.max(1, Math.ceil(eventCount / trainMax)),
@@ -51,6 +53,8 @@ export interface ComputationRecord {
 	};
 	settings: ReturnType<typeof embeddingSettings>;
 	projectedEventCount: number;
+	sourceEventCount?: number;
+	sampling?: SamplingSummary | null;
 	renderedEventCount: number;
 	featureCount: number;
 	features: string[];
@@ -74,14 +78,14 @@ export interface ComputationRecord {
 }
 type RecordNode = { textContent: string | null };
 type PanelNode = { hidden: boolean };
-export function clearComputationRecord(node: RecordNode, panel: PanelNode): void {
+export function clearComputationRecord(node: RecordNode, panel?: PanelNode): void {
 	node.textContent = "";
-	panel.hidden = true;
+	if (panel) panel.hidden = true;
 }
 export function publishComputationRecord(
 	record: ComputationRecord,
 	node: RecordNode,
-	panel: PanelNode,
+	panel?: PanelNode,
 ): void {
 	clearComputationRecord(node, panel);
 	const { total, ...phases } = record.wallMs;
@@ -98,6 +102,13 @@ export function publishComputationRecord(
 		record.gpu.effectiveStorageWindowBytes > record.gpu.deviceMaxStorageBindingBytes
 	)
 		throw new Error("Inconsistent computation metadata");
+	if (
+		record.sampling &&
+		(record.sampling.selectedEventCount !== record.projectedEventCount ||
+			record.sampling.sourceEventCount !== record.sourceEventCount ||
+			record.sampling.sourceEventCount < record.sampling.selectedEventCount)
+	)
+		throw new Error("Inconsistent sampling metadata");
 	node.textContent = JSON.stringify(record);
-	panel.hidden = false;
+	if (panel) panel.hidden = false;
 }
