@@ -12,6 +12,7 @@ import { constants as fsConstants } from "node:fs";
 import { lstat, open, readFile, realpath } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -30,6 +31,8 @@ const MIME = new Map([
 	[".webmanifest", "application/manifest+json"],
 ]);
 const MAX_BYTES = 32 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 1024 * 1024;
+const PUBLICATION_PREFIX = "publication/";
 
 function securityHeaders() {
 	return {
@@ -68,7 +71,13 @@ const notFound = (response, headOnly) => plain(response, 404, "Not found", headO
  * Returns an absolute filesystem path or null (caller answers 404) or the
  * string "bad" for malformed/traversal input (caller answers 400).
  */
-function resolveRequestPath(publicRoot, rawUrl) {
+function _resolveRequestPath(publicRoot, rawUrl) {
+	const classified = classifyRequestPath(publicRoot, rawUrl);
+	return classified === "bad" || classified === null ? classified : classified.target;
+}
+
+/** Same single-decode confinement, additionally exposing the slash-normalized relative path. */
+function classifyRequestPath(publicRoot, rawUrl) {
 	let queryless;
 	try {
 		queryless = new URL(rawUrl, "http://local").pathname;
@@ -90,9 +99,161 @@ function resolveRequestPath(publicRoot, rawUrl) {
 		(decoded.length > 1 && decoded.endsWith("/"))
 	)
 		return null; // dotfiles and slash-suffixed paths: not found
+	const relativePath = segments.join("/");
 	const target = resolve(publicRoot, ...segments);
 	if (target !== publicRoot && !target.startsWith(`${publicRoot}${sep}`)) return "bad";
-	return target;
+	return { target, relativePath };
+}
+
+/**
+ * Load the staged publication manifest (bounded metadata) and index its exact
+ * payload paths. Only paths listed here may ever be served; everything else in
+ * the publication namespace 404s without a filesystem probe. Returns an empty
+ * map when no publication dataset is staged (synthetic demo stays unchanged).
+ */
+async function loadPublicationFiles(publicRoot, realRoot) {
+	const manifestPath = resolve(publicRoot, `${PUBLICATION_PREFIX}manifest.json`);
+	try {
+		const info = await lstat(manifestPath);
+		if (!info.isFile() || info.size === 0 || info.size > MAX_MANIFEST_BYTES) return new Map();
+		const real = await realpath(manifestPath);
+		if (real !== realRoot && !real.startsWith(`${realRoot}${sep}`)) return new Map();
+		const bytes = await readFile(manifestPath);
+		const parsed = JSON.parse(bytes.toString("utf8"));
+		if (
+			parsed?.schemaVersion !== 1 ||
+			!Array.isArray(parsed.files) ||
+			typeof parsed.id !== "string"
+		)
+			return new Map();
+		const files = new Map();
+		for (const entry of parsed.files) {
+			if (
+				typeof entry?.path !== "string" ||
+				typeof entry?.bytes !== "number" ||
+				!Number.isSafeInteger(entry.bytes) ||
+				entry.bytes < 0 ||
+				typeof entry?.sha256 !== "string" ||
+				!/^[a-f0-9]{64}$/.test(entry.sha256)
+			)
+				return new Map();
+			if (
+				entry.path.startsWith("/") ||
+				entry.path.includes("\\") ||
+				entry.path
+					.split("/")
+					.some(
+						(segment) =>
+							segment === "" || segment === "." || segment === ".." || segment.startsWith("."),
+					)
+			)
+				return new Map();
+			if (files.has(entry.path)) return new Map();
+			files.set(entry.path, { bytes: entry.bytes, sha256: entry.sha256 });
+		}
+		return files;
+	} catch {
+		return new Map();
+	}
+}
+
+/**
+ * Stream one allowlisted publication payload. The staged file must exist, stay
+ * confined, be a regular file (O_NOFOLLOW), and match the manifest's declared
+ * size exactly. The validated file descriptor is opened BEFORE any response
+ * header is written, so a failure here still produces a clean error response;
+ * bytes then stream from that descriptor so a ~300 MB dataset never sits in
+ * memory. The manifest's content hash is the ETag and the cache policy is
+ * no-cache: URLs are not content-addressed, so future data must revalidate.
+ */
+async function servePublicationFile(
+	publicRoot,
+	realRoot,
+	relativePath,
+	files,
+	request,
+	response,
+	headOnly,
+) {
+	// Manifest paths are relative to the publication namespace root; the request path
+	// carries the "publication/" prefix.
+	const entry = files.get(relativePath.slice(PUBLICATION_PREFIX.length));
+	if (!entry) return notFound(response, headOnly);
+	const target = resolve(publicRoot, ...relativePath.split("/"));
+	const finishHeaders = (extra) => {
+		response.writeHead(200, {
+			...securityHeaders(),
+			"content-type": "application/octet-stream",
+			"cache-control": "no-cache",
+			etag: `"${entry.sha256}"`,
+			"accept-ranges": "none",
+			...extra,
+		});
+	};
+	try {
+		const info = await lstat(target);
+		if (!info.isFile() || info.size !== entry.bytes) return notFound(response, headOnly);
+		const real = await realpath(target);
+		if (real !== realRoot && !real.startsWith(`${realRoot}${sep}`))
+			return notFound(response, headOnly);
+		// Confined, symlink-free read handle validated before headers; stream failures
+		// below can therefore only be transport problems, not validation problems.
+		const handle = await open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+		let handleAdopted = false;
+		try {
+			const opened = await handle.stat();
+			if (!opened.isFile() || opened.size !== entry.bytes) return notFound(response, headOnly);
+			if (headOnly) {
+				finishHeaders({ "content-length": String(entry.bytes) });
+				response.end();
+				return;
+			}
+			if (request.headers["if-none-match"] === `"${entry.sha256}"`) {
+				response.writeHead(304, {
+					...securityHeaders(),
+					etag: `"${entry.sha256}"`,
+					"cache-control": "no-cache",
+				});
+				response.end();
+				return;
+			}
+			finishHeaders({ "content-length": String(entry.bytes) });
+			// Stream from the already-validated descriptor. The created stream owns the
+			// handle via autoClose, which closes it at completion or destruction; the
+			// outer finally must then not close it again. Early client disconnects are
+			// transport outcomes, not server errors: the socket is destroyed, never a
+			// second 500 write.
+			const stream = handle.createReadStream({ autoClose: true });
+			try {
+				handleAdopted = true;
+				await pipeline(stream, response);
+			} finally {
+				// If pipeline never ran (synchronous throw before adoption), close here.
+				// Otherwise the stream has already destroyed/closed the descriptor.
+				if (!handleAdopted) stream.destroy();
+			}
+		} finally {
+			// The adopted stream closes the descriptor itself (autoClose); closing again
+			// would throw EBADF. When the handle was never adopted, close it explicitly.
+			if (!handleAdopted) await handle.close().catch(() => {});
+		}
+	} catch (error) {
+		const transport =
+			error?.code === "EPIPE" ||
+			error?.code === "ECONNRESET" ||
+			error?.code === "ERR_STREAM_PREMATURE_CLOSE" ||
+			error?.name === "AbortError";
+		if (transport) {
+			response.destroy();
+			return;
+		}
+		// Headers may already be committed by pipeline teardown; only report when safe.
+		if (!response.headersSent && !response.destroyed) {
+			plain(response, 500, "Internal error", headOnly);
+		} else {
+			response.destroy();
+		}
+	}
 }
 
 /**
@@ -141,7 +302,7 @@ async function serveFromRoot(publicRoot, realRoot, target, response, headOnly, c
 	}
 }
 
-export function createStaticServer(options = {}) {
+export async function createStaticServer(options = {}) {
 	const publicRoot = resolve(options.publicRoot ?? resolve(HERE, "public"));
 	const releasePath = resolve(options.releasePath ?? resolve(HERE, "release.json"));
 	const packageRoot = dirname(publicRoot);
@@ -149,6 +310,9 @@ export function createStaticServer(options = {}) {
 	// manifest lives at the package root, outside public/, so it is confined there.
 	const realPublicRoot = realpath(publicRoot).catch(() => publicRoot);
 	const realPackageRoot = realpath(packageRoot).catch(() => packageRoot);
+	// The publication allowlist is per instance; independent servers on different roots
+	// never share listed payloads.
+	const publicationFiles = await loadPublicationFiles(publicRoot, await realPublicRoot);
 	const log = options.log === undefined ? (line) => console.log(line) : options.log;
 	const server = createServer(async (request, response) => {
 		const started = Date.now();
@@ -164,18 +328,46 @@ export function createStaticServer(options = {}) {
 				finish(405);
 				return;
 			}
-			const target = resolveRequestPath(publicRoot, request.url ?? "/");
-			if (target === "bad") {
+			const classified = classifyRequestPath(publicRoot, request.url ?? "/");
+			if (classified === "bad") {
 				plain(response, 400, "Bad request", headOnly);
 				finish(400);
 				return;
 			}
-			if (target === null) {
+			if (classified === null) {
 				notFound(response, headOnly);
 				finish(404);
 				return;
 			}
-			// "/" maps to the staged index; release.json lives at the package root and is
+			const { target, relativePath } = classified;
+			// The publication namespace serves only manifest-listed payloads; the manifest
+			// itself is metadata and never store-cached. Unknown publication paths 404
+			// without touching the filesystem, and the generic MIME path never sees .fcs/.wsp.
+			if (relativePath.startsWith(PUBLICATION_PREFIX)) {
+				if (relativePath === `${PUBLICATION_PREFIX}manifest.json`) {
+					await serveFromRoot(
+						publicRoot,
+						realRoot,
+						resolve(publicRoot, `${PUBLICATION_PREFIX}manifest.json`),
+						response,
+						headOnly,
+						"no-store",
+					);
+					finish(200);
+					return;
+				}
+				await servePublicationFile(
+					publicRoot,
+					realRoot,
+					relativePath,
+					publicationFiles,
+					request,
+					response,
+					headOnly,
+				);
+				finish(200);
+				return;
+			} // "/" maps to the staged index; release.json lives at the package root and is
 			// never store-cached.
 			if (target === publicRoot || target === resolve(publicRoot, "index.html")) {
 				await serveFromRoot(
@@ -214,8 +406,14 @@ export function createStaticServer(options = {}) {
 			);
 			finish(200);
 		} catch (error) {
-			plain(response, 500, "Internal error", headOnly);
-			finish(500);
+			// The response may already be committed (e.g. a transport failure during a
+			// publication stream); never attempt a second head/body write on that socket.
+			if (!response.headersSent && !response.destroyed) {
+				plain(response, 500, "Internal error", headOnly);
+			} else if (!response.destroyed) {
+				response.destroy();
+			}
+			finish(response.headersSent ? 200 : 500);
 			log(`static server error: ${error instanceof Error ? error.message : "unknown"}`);
 		}
 	});
@@ -248,7 +446,7 @@ export async function main() {
 			return;
 		}
 	}
-	const server = createStaticServer();
+	const server = await createStaticServer();
 	await new Promise((ready, failed) => {
 		server.once("error", failed);
 		server.listen(port, host, ready);

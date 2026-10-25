@@ -1,11 +1,85 @@
 import { acquireDevice, createStorage, readback, upload } from "@flow-atlas/compute";
 import colorizeSrc from "./colorize.wgsl?raw";
+import {
+	type ComputationRecord,
+	clearComputationRecord,
+	embeddingSettings,
+	publishComputationRecord,
+} from "./computation.js";
 import { createSyntheticDemoFiles, DEMO_EMBED_OPTIONS } from "./demo.js";
+import {
+	loadPublicationDataset,
+	type PublicationManifest,
+	type PublicationTraining,
+	publicationProfileLabel,
+	publicationTrainingMode,
+	publicationTrainingOptions,
+} from "./publication.js";
 import { PointRenderer } from "./renderer.js";
 import { computeEmbedding, type LoadedWorkspace, loadWorkspace } from "./workspace.js";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const status = $("status");
+const clearSummary = () => {
+	clearComputationRecord($("computation-record"), $("computation-summary"));
+	$("computation-details").replaceChildren();
+};
+function showSummary(record: ComputationRecord) {
+	const seconds = (ms: number) => `${(ms / 1000).toFixed(3)} s`;
+	const setting = record.settings;
+	const rows = [
+		[
+			"Algorithm",
+			`${setting.algorithm} · ${setting.grid.x}×${setting.grid.y} · ${setting.epochs} epochs`,
+		],
+		[
+			"SOM training",
+			setting.training.mode === "all-events"
+				? `All ${record.projectedEventCount.toLocaleString()} events per SOM training epoch · stride 1`
+				: `Up to ${setting.training.trainMax.toLocaleString()} configured · window-local stride ${setting.training.stride}; exact selected count not measured`,
+		],
+		[
+			"Initialization statistics",
+			`Strided mean/SD · stride ${setting.initializationStatsStride} · ${setting.initializationStatsRows.toLocaleString()} rows; unchanged by the training selection`,
+		],
+		[
+			"Projected / renderer events",
+			`${record.projectedEventCount.toLocaleString()} / ${record.renderedEventCount.toLocaleString()}`,
+		],
+		["Features", `${record.featureCount}: ${record.features.join(", ")}`],
+		[
+			"Seeds",
+			`Imputation ${setting.seeds.imputation}; initialization ${setting.seeds.initialization}; training ${setting.seeds.training}`,
+		],
+		["Browser GPU", record.gpu.adapterDescription ?? "Adapter details not exposed by browser"],
+		["Effective compute window", `${record.gpu.effectiveStorageWindowBytes / 2 ** 20} MiB`],
+		[
+			"Device limits (not memory usage)",
+			`Storage binding ${(record.gpu.deviceMaxStorageBindingBytes / 2 ** 20).toFixed(0)} MiB; single buffer ${(record.gpu.deviceMaxBufferBytes / 2 ** 20).toFixed(0)} MiB`,
+		],
+		["Download + integrity / input", seconds(record.wallMs.input)],
+		["Parse, transforms + gating", seconds(record.wallMs.parseTransformsGating)],
+		["Feature preparation + statistics", seconds(record.wallMs.featurePreparation)],
+		["SOM training wall time", seconds(record.wallMs.somTraining)],
+		["Map + EmbedSOM projection", seconds(record.wallMs.mapEmbedProjection)],
+		["Display preparation + bounds", seconds(record.wallMs.displayPreparation)],
+		["Total wall time to ready", seconds(record.wallMs.total)],
+		[
+			"Memory / utilization",
+			"Unknown — GPU memory, GPU/CPU utilization and browser memory are not instrumented.",
+		],
+	];
+	const details = $("computation-details");
+	details.replaceChildren();
+	for (const [name, value] of rows) {
+		const term = document.createElement("dt"),
+			description = document.createElement("dd");
+		term.textContent = name as string;
+		description.textContent = value as string;
+		details.append(term, description);
+	}
+	publishComputationRecord(record, $("computation-record"), $("computation-summary"));
+}
 const log = (msg: string) => {
 	status.setAttribute("role", "status");
 	status.dataset.state = "info";
@@ -14,12 +88,14 @@ const log = (msg: string) => {
 };
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const showError = (error: unknown) => {
+	clearSummary();
 	status.setAttribute("role", "alert");
 	status.dataset.state = "error";
 	status.textContent = `Unable to load: ${message(error)}`;
 	console.error(error);
 };
 const unavailable = (detail: string) => {
+	clearSummary();
 	$("unsupported").hidden = false;
 	$("unsupported-detail").textContent = detail;
 	$("gpu-info").textContent = "WebGPU plotting is unavailable in this browser/session.";
@@ -30,7 +106,9 @@ const unavailable = (detail: string) => {
 	$("canvas").style.opacity = "0";
 	$("canvas").style.pointerEvents = "none";
 	$<HTMLButtonElement>("load-demo").disabled = true;
+	$<HTMLButtonElement>("load-publication").disabled = true;
 	$<HTMLInputElement>("files").disabled = true;
+	$<HTMLSelectElement>("publication-training-mode").disabled = true;
 	log("Overview available; interactive plotting requires WebGPU.");
 };
 
@@ -42,6 +120,10 @@ function bufferScope(device: GPUDevice) {
 		get(target, key) {
 			if (key === "createBuffer")
 				return (descriptor: GPUBufferDescriptor) => {
+					if (descriptor.size > target.limits.maxBufferSize)
+						throw new Error(
+							`Dataset buffer exceeds this GPU's maximum buffer size (${(target.limits.maxBufferSize / 2 ** 20).toFixed(0)} MiB). No event subset was substituted.`,
+						);
 					const buffer = target.createBuffer(descriptor);
 					buffers.add(buffer);
 					return buffer;
@@ -114,11 +196,14 @@ async function main() {
 		return;
 	}
 	const { device, limits } = dev;
+	const computeBinding = Math.min(limits.maxStorageBufferBindingSize, 128 * 2 ** 20);
 	$("gpu-info").textContent =
 		`GPU: ${dev.description} · binding ${(limits.maxStorageBufferBindingSize / 2 ** 20).toFixed(0)} MiB`;
 	let deviceLost = false;
+	let loadAbort: AbortController | null = null;
 	device.lost.then((info) => {
 		deviceLost = true;
+		loadAbort?.abort(new Error("GPU device lost during dataset loading"));
 		unavailable(`The GPU device was lost: ${info.message}. Reload the page to retry.`);
 	});
 
@@ -142,15 +227,36 @@ async function main() {
 	let currentBuffers: ReturnType<typeof bufferScope> | null = null;
 	let loading = false;
 	let repaint: Promise<void> = Promise.resolve();
+	type SourceKind = "local" | "synthetic" | "publication";
+	let activeSource: SourceKind | null = null;
+	let displayedSource: SourceKind = "local";
 	const demoButton = $<HTMLButtonElement>("load-demo");
+	const publicationButton = $<HTMLButtonElement>("load-publication");
+	const trainingSelector = $<HTMLSelectElement>("publication-training-mode");
+	trainingSelector.value = publicationTrainingMode(location.search);
+	const updateTrainingDescription = () => {
+		$("publication-training").textContent = publicationProfileLabel(
+			3885530,
+			trainingSelector.value === "all" ? "all" : "limited",
+		);
+	};
+	trainingSelector.onchange = updateTrainingDescription;
+	updateTrainingDescription();
 	const filePicker = $<HTMLInputElement>("files");
 	const setLoading = (value: boolean) => {
 		loading = value;
 		demoButton.disabled = value || deviceLost;
+		publicationButton.disabled = value || deviceLost;
+		trainingSelector.disabled = value || deviceLost;
 		filePicker.disabled = value || deviceLost;
 		$("controls").inert = value || deviceLost;
 		$("map").setAttribute("aria-busy", String(value));
-		demoButton.textContent = value ? "Loading…" : "Load synthetic demo";
+		demoButton.textContent =
+			value && activeSource === "synthetic" ? "Loading…" : "Load synthetic demo";
+		publicationButton.textContent =
+			value && activeSource === "publication"
+				? "Loading publication dataset…"
+				: "Load publication dataset";
 	};
 
 	let ws: LoadedWorkspace | null = null;
@@ -171,6 +277,17 @@ async function main() {
 			sel[Math.floor(p / 32)] = (sel[Math.floor(p / 32)] as number) | (1 << (p % 32));
 		const sampleVisible = new Uint32Array(Math.max(1, ws.samples.length));
 		ws.samples.forEach((s, i) => {
+			// The initial publication view includes every loaded sample, including any
+			// without a condition/batch assignment. Explicit user filters still apply.
+			if (
+				displayedSource === "publication" &&
+				[...(ws?.conditions ?? []), ...(ws?.batches ?? [])].every((group) =>
+					groupSelected.has(group),
+				)
+			) {
+				sampleVisible[i] = 1;
+				return;
+			}
 			const cond = ws?.conditions.length
 				? s.groups.some((g) => ws?.conditions.includes(g) && groupSelected.has(g))
 				: true;
@@ -380,19 +497,80 @@ async function main() {
 		};
 	}
 
-	async function run(input: File[] | (() => Promise<File[]>), synthetic = false) {
+	async function clearWorkspace() {
+		await repaint;
+		clearMap();
+		await device.queue.onSubmittedWorkDone();
+		currentBuffers?.releaseExcept();
+		currentBuffers = null;
+		ws = null;
+		colorBuf = null;
+		popSelected.clear();
+		groupSelected.clear();
+		groupColors.clear();
+		channelRange.clear();
+		popColors.length = 0;
+		unlabelledSelected = true;
+		colorBy = "labels";
+		$("controls").hidden = true;
+		$("legend").replaceChildren();
+		$("map-empty").hidden = false;
+	}
+	async function run(
+		input: { kind: "local"; files: File[] } | { kind: "synthetic" } | { kind: "publication" },
+	) {
 		if (loading || deviceLost) return;
+		clearSummary();
+		const trainingMode: PublicationTraining = trainingSelector.value === "all" ? "all" : "limited";
+		activeSource = input.kind;
+		loadAbort = new AbortController();
 		setLoading(true);
 		let nextBuffers: ReturnType<typeof bufferScope> | null = null;
 		let scopeOpen = false;
+		let publication: PublicationManifest | undefined;
 		try {
 			const t0 = performance.now();
-			log(
-				synthetic
-					? "Generating a small seeded synthetic example…"
-					: "Opening local files in this browser…",
-			);
-			const files = typeof input === "function" ? await input() : input;
+			let files: File[];
+			if (input.kind === "publication") {
+				// Release the previous plot before retaining a second complete download.
+				await clearWorkspace();
+				$("data-summary").textContent =
+					"Loading publication companion · complete dataset, no subset fallback";
+				$("map-empty-detail").textContent =
+					"Downloading and checking the complete publication companion dataset…";
+				let lastTime = 0,
+					lastVerified = -1;
+				const loaded = await loadPublicationDataset({
+					baseUrl: document.baseURI,
+					signal: loadAbort.signal,
+					onProgress: (progress) => {
+						if (progress.phase === "manifest") {
+							log("Reading publication manifest…");
+							return;
+						}
+						const now = performance.now();
+						if (now - lastTime >= 100 || lastVerified !== progress.verifiedFiles) {
+							log(
+								`Publication download: ${(progress.downloadedBytes / 2 ** 20).toFixed(1)} / ${(progress.totalBytes / 2 ** 20).toFixed(1)} MiB · ${progress.verifiedFiles}/${progress.fileCount} files verified`,
+							);
+							lastTime = now;
+							lastVerified = progress.verifiedFiles;
+						}
+					},
+				});
+				files = loaded.files;
+				publication = loaded.manifest;
+				$("publication-note").textContent =
+					`${publication.sampleCount} samples · ${publication.eventCount.toLocaleString()} events · ${(publication.totalBytes / 1e6).toFixed(1)} MB. ${publication.notes.join(" ")}`;
+				$("publication-citation").textContent = publication.citation.title;
+			} else if (input.kind === "synthetic") {
+				log("Generating a small seeded technical example…");
+				files = await createSyntheticDemoFiles();
+			} else {
+				log("Opening local files in this browser…");
+				files = input.files;
+			}
+			const inputMs = performance.now() - t0;
 			const workspaces = files.filter((file) => file.name.toLowerCase().endsWith(".wsp"));
 			const dataFiles = files.filter((file) => file.name.toLowerCase().endsWith(".fcs"));
 			if (workspaces.length !== 1 || dataFiles.length === 0)
@@ -400,38 +578,48 @@ async function main() {
 			const fcs = new Map(dataFiles.map((file) => [file.name, file]));
 			if (fcs.size !== dataFiles.length)
 				throw new Error("Several FCS files share a filename. Choose one unambiguous sample set.");
-			await repaint;
-			clearMap();
-			await device.queue.onSubmittedWorkDone();
-			currentBuffers?.releaseExcept();
-			currentBuffers = null;
-			ws = null;
-			colorBuf = null;
-			popSelected.clear();
-			groupSelected.clear();
-			groupColors.clear();
-			channelRange.clear();
-			popColors.length = 0;
-			unlabelledSelected = true;
-			colorBy = "labels";
-			$("controls").hidden = true;
-			$("legend").replaceChildren();
-			$("map-empty").hidden = false;
+			await clearWorkspace();
 			$("map-empty-detail").textContent = "Preparing the WebGPU view…";
-			$("data-summary").textContent = synthetic
-				? "Loading synthetic illustration · no biological validation"
-				: "Loading local files · not uploaded";
+			$("data-summary").textContent =
+				input.kind === "publication"
+					? "Preparing all publication companion events…"
+					: input.kind === "synthetic"
+						? "Loading synthetic illustration · no biological validation"
+						: "Loading local files · not uploaded";
 			nextBuffers = bufferScope(device);
 			device.pushErrorScope("validation");
 			scopeOpen = true;
+			const parseStarted = performance.now();
 			ws = await loadWorkspace(
 				nextBuffers.device,
-				limits.maxStorageBufferBindingSize,
+				computeBinding,
 				await (workspaces[0] as File).text(),
 				fcs,
 				log,
 			);
+			await device.queue.onSubmittedWorkDone();
+			const parseTransformsGatingMs = performance.now() - parseStarted;
 			if (ws.n < 1) throw new Error("The selected workspace has no events to plot.");
+			if (publication) {
+				const expected = new Map(
+					publication.files.filter((file) => file.kind === "fcs").map((file) => [file.name, file]),
+				);
+				if (
+					ws.n !== publication.eventCount ||
+					ws.samples.length !== publication.sampleCount ||
+					new Set(ws.samples.map((sample) => sample.basename)).size !== expected.size ||
+					ws.samples.some(
+						(sample) =>
+							!expected.has(sample.basename) ||
+							(expected.get(sample.basename)?.events !== undefined &&
+								expected.get(sample.basename)?.events !== sample.count),
+					)
+				)
+					throw new Error(
+						"Loaded publication samples/event counts differ from the manifest. No partial dataset will be displayed.",
+					);
+			}
+			displayedSource = input.kind;
 			ws.populations.forEach((_, i) => {
 				popColors[i] = LABEL_PALETTE[i % LABEL_PALETTE.length] as string;
 				popSelected.add(i);
@@ -443,13 +631,20 @@ async function main() {
 			ws.batches.forEach((g, i) => {
 				groupColors.set(g, LABEL_PALETTE[(i + 5) % LABEL_PALETTE.length] as string);
 			});
-			await computeEmbedding(
+			const options =
+				input.kind === "synthetic"
+					? DEMO_EMBED_OPTIONS
+					: input.kind === "publication"
+						? publicationTrainingOptions(ws.n, trainingMode)
+						: {};
+			const embeddingTime = await computeEmbedding(
 				nextBuffers.device,
-				limits.maxStorageBufferBindingSize,
+				computeBinding,
 				ws,
 				log,
-				synthetic ? DEMO_EMBED_OPTIONS : {},
+				options,
 			);
+			const displayStarted = performance.now();
 			colorBuf = createStorage(nextBuffers.device, ws.n * 4, undefined, "color");
 			renderer.setData(
 				ws.embedding as GPUBuffer,
@@ -472,10 +667,78 @@ async function main() {
 			$("controls").hidden = false;
 			$("map-empty").hidden = true;
 			$("data-summary").textContent =
-				`${synthetic ? "Synthetic demo" : "Local files"} · ${ws.n.toLocaleString()} events · ${ws.populations.length} populations · ${synthetic ? "not biologically validated" : "browser prototype, not a host receipt"}`;
-			log(
-				`Ready in ${((performance.now() - t0) / 1000).toFixed(1)}s — drag to pan, scroll to zoom.`,
-			);
+				input.kind === "publication"
+					? `Publication companion · ${ws.n.toLocaleString()} events · ${ws.samples.length} samples · browser prototype`
+					: `${input.kind === "synthetic" ? "Synthetic demo" : "Local files"} · ${ws.n.toLocaleString()} events · ${ws.populations.length} populations · ${input.kind === "synthetic" ? "not biologically validated" : "browser prototype, not a host receipt"}`;
+			$("active-profile").textContent =
+				input.kind === "publication"
+					? publicationProfileLabel(ws.n, trainingMode)
+					: input.kind === "synthetic"
+						? "Technical synthetic example: 8×8 SOM · 5 epochs · seed 20261025."
+						: "Local-file embedding uses the existing prototype defaults.";
+			const displayPreparationMs =
+				embeddingTime.boundsReadbackMs + performance.now() - displayStarted;
+			const totalMs = performance.now() - t0;
+			showSummary({
+				schemaVersion: 1,
+				completedAt: new Date().toISOString(),
+				profile:
+					input.kind === "publication"
+						? `publication-som20x20-e10-${trainingMode}-seed42-v1`
+						: input.kind === "synthetic"
+							? "synthetic-som8x8-e5-seed20261025-v1"
+							: "local-prototype-defaults-v1",
+				source: {
+					kind: input.kind,
+					inputFileCount: files.length,
+					sampleCount: ws.samples.length,
+					...(publication
+						? {
+								publication: {
+									...publication,
+									fileCount: publication.files.length,
+									fcsFileCount: publication.files.filter((file) => file.kind === "fcs").length,
+									wspFileCount: 1,
+									verifiedFileCount: publication.files.length,
+									fileIntegrity: "byte-length-and-sha256-verified",
+								},
+							}
+						: {}),
+				},
+				settings: embeddingSettings(options, ws.n),
+				projectedEventCount: ws.n,
+				renderedEventCount: ws.n,
+				featureCount: ws.embedChannels.length,
+				features: ws.embedChannels.map((index) => ws?.channels[index] as string),
+				renderScope:
+					"All projected rows supplied to renderer; visible points depend on view bounds and interactive filters. No publication event subset substituted.",
+				gpu: {
+					adapterDescription: dev.description.trim() || null,
+					effectiveStorageWindowBytes: computeBinding,
+					deviceMaxStorageBindingBytes: limits.maxStorageBufferBindingSize,
+					deviceMaxBufferBytes: limits.maxBufferSize,
+				},
+				wallMs: {
+					input: inputMs,
+					parseTransformsGating: parseTransformsGatingMs,
+					featurePreparation: embeddingTime.featurePreparationMs,
+					somTraining: embeddingTime.somTrainingMs,
+					mapEmbedProjection: embeddingTime.mapEmbedProjectionMs,
+					displayPreparation: displayPreparationMs,
+					total: totalMs,
+				},
+				timingScope:
+					"performance.now wall-clock phases with relevant GPU queue drains, not GPU timestamps or pure kernel time. Includes CPU work, scheduling, transfers and UI preparation; input includes previous-plot release for publication loads. Total also includes small gaps/validation; later interactions excluded.",
+				gpuTimestampMeasurement: false,
+				resources: {
+					gpuMemoryBytes: null,
+					gpuUtilizationPercent: null,
+					browserMemoryBytes: null,
+					cpuUtilizationPercent: null,
+					scope: "Not instrumented. Device limits are not memory usage or available VRAM.",
+				},
+			});
+			log(`Ready in ${(totalMs / 1000).toFixed(1)}s wall time — drag to pan, scroll to zoom.`);
 			if (matchMedia("(max-width: 760px)").matches)
 				$("map").scrollIntoView({
 					block: "start",
@@ -496,22 +759,32 @@ async function main() {
 					"No plot loaded. Try the synthetic demo or another WSP/FCS selection.";
 				$("data-summary").textContent = "Load failed · no data uploaded";
 			}
+			if (input.kind === "publication") {
+				$("map-empty-detail").textContent =
+					"Publication load failed. No smaller or synthetic dataset was substituted.";
+				$("data-summary").textContent = "Publication companion not loaded";
+			}
 			showError(e);
 		} finally {
 			if (scopeOpen) await device.popErrorScope().catch(() => null);
 			await device.queue.onSubmittedWorkDone().catch(() => {});
 			nextBuffers?.releaseExcept();
 			filePicker.value = "";
+			loadAbort = null;
 			setLoading(false);
+			activeSource = null;
 		}
 	}
-	demoButton.onclick = () => void run(createSyntheticDemoFiles, true);
+	demoButton.onclick = () => void run({ kind: "synthetic" });
+	publicationButton.onclick = () => void run({ kind: "publication" });
 	setLoading(false);
-	log("Ready for a synthetic demo or your local WSP/FCS files.");
+	log("Ready to load the full publication companion or your local WSP/FCS files.");
 
 	// Dev convenience: ?oracle[=N] loads the oracle dataset served by the Vite dev server (first N files).
 	const q = new URLSearchParams(location.search);
-	if (import.meta.env.DEV && q.has("oracle")) {
+	if (q.has("publication")) {
+		void run({ kind: "publication" });
+	} else if (import.meta.env.DEV && q.has("oracle")) {
 		const limit = Number(q.get("oracle")) || 0;
 		const names = (await (await fetch("/oracle/index.json")).json()) as string[];
 		const wanted = names
@@ -527,11 +800,11 @@ async function main() {
 					),
 			),
 		);
-		void run(files);
+		void run({ kind: "local", files });
 	}
 
 	$<HTMLInputElement>("files").onchange = (e) =>
-		void run([...((e.target as HTMLInputElement).files ?? [])]);
+		void run({ kind: "local", files: [...((e.target as HTMLInputElement).files ?? [])] });
 	$<HTMLInputElement>("size").oninput = (e) => {
 		renderer.pointPx = Number((e.target as HTMLInputElement).value);
 		renderer.draw();
@@ -579,7 +852,7 @@ async function main() {
 					if (file) out.push(file);
 				}
 			}
-			void run(out);
+			void run({ kind: "local", files: out });
 		} catch (error) {
 			showError(error);
 		}
