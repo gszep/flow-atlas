@@ -3,26 +3,55 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>flow-atlas</title>
+<meta name="description" content="Flow Atlas: an interactive synthetic WebGPU cytometry prototype and a vision for agentic verification and discovery." />
+<title>Flow Atlas — prototype &amp; vision</title>
 <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
 <div id="app">
 	<aside id="sidebar">
-		<h1>flow-atlas <small>prototype</small></h1>
-		<section id="load">
-			<p>Drop the FlowAtlas.jl <code>data/</code> folder here (a <code>.wsp</code> plus its <code>.fcs</code> files), or</p>
-			<input id="files" type="file" multiple webkitdirectory />
-			<p id="gpu-info" class="muted"></p>
+		<h1>Flow Atlas <small>public prototype</small></h1>
+		<section class="overview" aria-labelledby="intro-title">
+			<h2 id="intro-title">Explore the current prototype</h2>
+			<p>A local, interactive view of cytometry populations. Try the generated example below—no data download or account needed.</p>
+			<h3>Current browser</h3>
+			<p>Local WSP/FCS loading, WebGPU gating, SOM and EmbedSOM, with population colours and marker views. This is an exploratory visual prototype, not a host-receipt-backed verification plot.</p>
+			<p class="muted"><strong>Separate host backend:</strong> agent/MCP tools for immutable inputs, explicit analysis and receipts are delivered, but are not connected to this page.</p>
 		</section>
-		<section id="status" class="muted"></section>
+		<section id="load">
+			<button id="load-demo" type="button" disabled aria-describedby="demo-note gpu-info">Load synthetic demo</button>
+			<p id="demo-note" class="muted">3,072 generated events · 3 artificial populations · no biological validation.</p>
+			<label for="files">Or open your own WSP and matching FCS files</label>
+			<input id="files" type="file" multiple accept=".wsp,.fcs" disabled aria-describedby="privacy-note gpu-info" />
+			<p id="privacy-note" class="muted">You can also drop files or a folder. Selected files stay in your browser and are never uploaded. Large datasets may exceed browser/device memory.</p>
+			<p id="gpu-info" class="muted">Checking WebGPU availability…</p>
+			<div id="unsupported" role="alert" hidden>
+				<strong>Interactive plotting needs WebGPU.</strong>
+				<p id="unsupported-detail"></p>
+				<p>The overview and planned direction remain readable. No fallback computation runs.</p>
+			</div>
+		</section>
+		<p id="status" role="status" aria-live="polite" aria-atomic="true">Preparing the browser prototype.</p>
 		<section id="controls" hidden>
 			<label>Colour by <select id="colour-by"></select></label>
 			<label>Marker size <input id="size" type="range" min="0.5" max="6" step="0.1" value="1.5" /></label>
 			<div id="legend"></div>
 		</section>
+		<section class="vision" aria-labelledby="vision-title">
+			<h2 id="vision-title">The vision</h2>
+			<p><strong>Agentic cytometry with a collective human verification and discovery layer</strong></p>
+			<p><strong>Verification:</strong> make scientific context and evidence easier for people to check.</p>
+			<p><strong>Discovery:</strong> help people and agents investigate questions together, retaining uncertainty and disagreement.</p>
+			<p><span class="planned">Planned, not yet implemented</span> Collective and mobile verification, starting with archived-data workflows and working towards a live scientific loop.</p>
+		</section>
+		<p class="disclaimer">Illustrative software, not a clinical tool. No FlowJo parity, biological validation or production-readiness claim.</p>
 	</aside>
-	<main id="map"><canvas id="canvas"></canvas><div id="unsupported" hidden></div></main>
+	<main id="map" aria-label="Interactive population map">
+		<canvas id="canvas" aria-label="SOM/EmbedSOM scatter plot; population counts and colour controls are in the sidebar"></canvas>
+		<div id="map-empty"><h2>A small example. A larger direction.</h2><p id="map-empty-detail">Load the synthetic demo to explore three artificial populations using the existing WebGPU pipeline.</p></div>
+		<p id="data-summary">No data loaded · all processing stays in this browser</p>
+		<p id="map-help">Drag to pan · scroll to zoom · adjust colour and marker size in the sidebar</p>
+	</main>
 </div>
 <script type="module" src="/src/main.ts"></script>
 </body>

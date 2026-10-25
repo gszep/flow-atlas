@@ -1,12 +1,17 @@
 # Flow Atlas delivery and acceptance
 
+The explicitly authorized public browser presentation is documented separately in
+[`PUBLIC_DEMO.md`](PUBLIC_DEMO.md). It hosts static UI assets and synthetic example
+data, not the local studio's analysis API or private experiments.
+
 ## Applicable surface
 
 The documented agent-facing application is the repository-built **Node 24 local
 studio** in `packages/host`, started with an explicit experiment root. It serves
 MCP and JSON-RPC on loopback; built browser assets are optional. The repository
-currently has a validation workflow in `.github/workflows/ci.yml`, not a configured
-cloud-deployment or package-registry release workflow. Package version `0.0.0` is
+has a validation workflow in `.github/workflows/ci.yml`. Public static-demo hosting
+does not imply a cloud deployment of this local analysis service or a package-registry
+release workflow. Package version `0.0.0` is
 not sufficient to distinguish delivered builds.
 
 For host changes, delivery closes at a runnable local build with **actual served

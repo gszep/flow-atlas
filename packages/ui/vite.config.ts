@@ -43,6 +43,7 @@ function oraclePlugin(): Plugin {
 }
 
 export default defineConfig({
+	base: "./",
 	server: { port: 3141 },
 	preview: { port: 3141 },
 	build: { target: "esnext" },
