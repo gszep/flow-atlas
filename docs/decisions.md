@@ -1695,3 +1695,32 @@ preview pixels and retained single-draw/batched point parity. CPU tests cover
 coalescing, quiet-period refinement, transforms, pointer cancellation and bounded
 preview queueing. Actual phone interaction acceptance remains user-owned; no
 Artemis GPU work was used.
+
+## 2026-10-26 — Restore live point navigation
+
+**User requirement supersedes image previews:** gestures should redraw loaded
+points directly, with no image scaling, tile loading or delayed sharpness change.
+Keep the safer bounded batches for initial/filter rendering and retain earlier
+memory/recolour/cache-staging improvements. For navigation, submit one complete
+point frame directly to the canvas, coalescing animation-frame inputs and allowing
+only one point frame in flight. Requests arriving during that frame replace the
+pending camera instead of accumulating stale frames. Remove the preview shader,
+second image texture and 150-ms refinement timer.
+
+Use four-vertex triangle strips instead of six-vertex triangle lists for each
+point. The circle, colour, opacity and event coverage remain unchanged. Native
+Dawn tests compare the optimized output exactly against the original six-vertex
+tessellation and verify the live translated frame.
+
+**Measured before changing the renderer:** with all 3,885,530 events in Calcifer's
+browser, six-vertex direct draws took 35–39 ms versus 62–74 ms with per-65,536-event
+drains (three wall-time samples at each of two zoom levels). These are browser
+queue-completion measurements, not isolated GPU timestamps.
+
+**Measured acceptance:** optimized live rendering produced 90 complete point
+frames for 90 animation-frame inputs in each desktop pan/wheel and compact
+pan/pinch test. Every frame included all events; there were no image-preview
+draws, no late refinement frames and no backing-resolution change during motion.
+The tested animation-frame cadence was about 33 ms, not a 60/120-fps or actual
+phone benchmark. Initial loading protection is retained, but actual-phone live
+rendering still needs user acceptance. No Artemis GPU work was used.

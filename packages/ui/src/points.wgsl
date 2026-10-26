@@ -7,7 +7,7 @@ struct VOut { @builtin(position) p: vec4f, @location(0) c: vec4f, @location(1) u
 
 @vertex
 fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
-  var quad = array<vec2f, 6>(vec2f(-1,-1), vec2f(1,-1), vec2f(-1,1), vec2f(-1,1), vec2f(1,-1), vec2f(1,1));
+  var quad = array<vec2f, 4>(vec2f(-1,-1), vec2f(1,-1), vec2f(-1,1), vec2f(1,1));
   let c = color[ii];
   var o: VOut;
   let a = f32(c >> 24u) / 255.0;

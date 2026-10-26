@@ -1,5 +1,4 @@
-import { type Camera, moveCamera, previewTransform } from "./map-camera.js";
-import previewSrc from "./map-preview.wgsl?raw";
+import { type Camera, moveCamera } from "./map-camera.js";
 import pointsSrc from "./points.wgsl?raw";
 import { canvasBudget, renderBatches } from "./render-budget.js";
 
@@ -14,23 +13,15 @@ export class PointRenderer {
 	private readonly ctx: GPUCanvasContext;
 	private readonly pipeline: GPURenderPipeline;
 	private readonly viewBuf: GPUBuffer;
-	private bindGroup: GPUBindGroup | null = null;
-	private count = 0;
 	private readonly format: GPUTextureFormat;
+	private bindGroup: GPUBindGroup | null = null;
 	private target: GPUTexture | null = null;
-	private completed: GPUTexture | null = null;
-	private completedCamera: Camera | null = null;
-	private readonly previewPipeline: GPURenderPipeline;
-	private readonly previewUniform: GPUBuffer;
-	private readonly previewSampler: GPUSampler;
-	private previewFrame: number | null = null;
-	private previewActive: Promise<void> | null = null;
-	private previewInFlight = 0;
-	private previewDirty = false;
-	private settleTimer: ReturnType<typeof setTimeout> | null = null;
+	private count = 0;
 	private revision = 0;
 	private pending = false;
+	private live = false;
 	private active: Promise<void> | null = null;
+	private gestureFrame: number | null = null;
 	private dataReady = false;
 	private stopped = false;
 	private pixelRatio = 1;
@@ -71,40 +62,25 @@ export class PointRenderer {
 					},
 				],
 			},
-			primitive: { topology: "triangle-list" },
+			primitive: { topology: "triangle-strip" },
 		});
 		this.viewBuf = device.createBuffer({
 			size: 32,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		});
-		const previewModule = device.createShaderModule({ code: previewSrc });
-		this.previewPipeline = device.createRenderPipeline({
-			layout: "auto",
-			vertex: { module: previewModule, entryPoint: "vs" },
-			fragment: { module: previewModule, entryPoint: "fs", targets: [{ format: this.format }] },
-			primitive: { topology: "triangle-list" },
-		});
-		this.previewUniform = device.createBuffer({
-			size: 16,
-			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-		});
-		this.previewSampler = device.createSampler({ minFilter: "linear", magFilter: "linear" });
 		this.attachInteraction();
 		void device.lost.then(() => {
 			this.stopped = true;
 			this.pending = false;
 			this.revision++;
+			this.cancelGesture();
 			this.target?.destroy();
 			this.target = null;
-			this.completed?.destroy();
-			this.completed = null;
-			this.cancelInteraction();
 		});
 	}
 
 	setData(pos: GPUBuffer, color: GPUBuffer, count: number, bounds: Bounds): void {
-		this.cancelInteraction();
-		this.completedCamera = null;
+		this.cancelGesture();
 		this.revision++;
 		this.pending = false;
 		this.dataReady = false;
@@ -112,20 +88,18 @@ export class PointRenderer {
 		this.bounds = bounds;
 		this.bindGroup = this.device.createBindGroup({
 			layout: this.pipeline.getBindGroupLayout(0),
-			entries: [
-				{ binding: 0, resource: { buffer: this.viewBuf } },
-				{ binding: 1, resource: { buffer: pos } },
-				{ binding: 2, resource: { buffer: color } },
-			],
+			entries: [this.viewBuf, pos, color].map((buffer, binding) => ({
+				binding,
+				resource: { buffer },
+			})),
 		});
 		this.zoom = 1;
 		this.panX = 0;
 		this.panY = 0;
-		// Colour preparation must finish before the first draw; do not submit millions
-		// of invisible/uninitialized instances as an intermediate frame.
+		// The caller must finish colour preparation before requesting the first frame.
 	}
 
-	private resize(): void {
+	private resize() {
 		const budget = canvasBudget(
 			this.canvas.clientWidth,
 			this.canvas.clientHeight,
@@ -133,42 +107,33 @@ export class PointRenderer {
 			this.device.limits.maxTextureDimension2D,
 			matchMedia("(max-width: 760px), (pointer: coarse)").matches,
 		);
-		const w = budget.width,
-			h = budget.height;
 		this.pixelRatio = budget.ratio;
-		if (this.canvas.width !== w || this.canvas.height !== h) {
-			this.canvas.width = w;
-			this.canvas.height = h;
+		if (this.canvas.width !== budget.width || this.canvas.height !== budget.height) {
+			this.canvas.width = budget.width;
+			this.canvas.height = budget.height;
 			this.target?.destroy();
 			this.target = null;
-			this.completed?.destroy();
-			this.completed = null;
-			this.completedCamera = null;
 		}
-		this.target ??= this.device.createTexture({
-			size: [w, h],
-			format: this.format,
-			usage:
-				GPUTextureUsage.RENDER_ATTACHMENT |
-				GPUTextureUsage.COPY_SRC |
-				GPUTextureUsage.TEXTURE_BINDING,
-		});
 	}
-
+	private cancelGesture() {
+		if (this.gestureFrame !== null) cancelAnimationFrame(this.gestureFrame);
+		this.gestureFrame = null;
+	}
 	async pause(): Promise<void> {
-		this.cancelInteraction();
+		this.cancelGesture();
 		this.dataReady = false;
 		this.pending = false;
 		this.revision++;
 		await this.active;
-		await this.previewActive;
 	}
-
 	draw(): Promise<void> {
+		return this.enqueue(false);
+	}
+	private enqueue(live: boolean): Promise<void> {
 		if (this.stopped) return Promise.resolve();
-		this.cancelInteraction();
 		this.dataReady = true;
 		this.pending = true;
+		this.live = live;
 		this.revision++;
 		if (!this.active)
 			this.active = this.renderLatest().finally(() => {
@@ -179,123 +144,58 @@ export class PointRenderer {
 	private requestDraw() {
 		if (this.dataReady) void this.draw().catch(this.onError);
 	}
-	private cancelInteraction() {
-		if (this.previewFrame !== null) cancelAnimationFrame(this.previewFrame);
-		this.previewFrame = null;
-		this.previewDirty = false;
-		if (this.settleTimer !== null) clearTimeout(this.settleTimer);
-		this.settleTimer = null;
-	}
 	private camera(): Camera {
 		return { zoom: this.zoom, panX: this.panX, panY: this.panY };
 	}
 	private gesture() {
-		if (!this.dataReady || this.stopped) return;
-		// Cancel an obsolete expensive rebuild, not the completed image used for motion.
-		this.revision++;
-		this.pending = false;
-		this.previewDirty = true;
-		this.schedulePreview();
-		if (this.settleTimer !== null) clearTimeout(this.settleTimer);
-		this.settleTimer = setTimeout(() => {
-			this.settleTimer = null;
-			this.requestDraw();
-		}, 150);
-	}
-	private schedulePreview() {
-		if (
-			this.previewFrame !== null ||
-			this.previewInFlight >= 2 ||
-			!this.previewDirty ||
-			!this.dataReady ||
-			this.stopped
-		)
-			return;
-		this.previewFrame = requestAnimationFrame(() => {
-			this.previewFrame = null;
-			this.previewDirty = false;
-			this.previewInFlight++;
-			const active = this.presentPreview()
-				.catch(this.onError)
-				.finally(() => {
-					this.previewInFlight--;
-					if (this.previewActive === active) this.previewActive = null;
-					this.schedulePreview();
-				});
-			this.previewActive = active;
+		if (!this.dataReady || this.stopped || this.gestureFrame !== null) return;
+		this.gestureFrame = requestAnimationFrame(() => {
+			this.gestureFrame = null;
+			if (this.dataReady && !this.stopped) void this.enqueue(true).catch(this.onError);
 		});
-	}
-	private async presentPreview() {
-		if (!this.completed || !this.completedCamera || this.stopped) return;
-		this.device.queue.writeBuffer(
-			this.previewUniform,
-			0,
-			previewTransform(this.completedCamera, this.camera()),
-		);
-		const bindGroup = this.device.createBindGroup({
-			layout: this.previewPipeline.getBindGroupLayout(0),
-			entries: [
-				{ binding: 0, resource: this.completed.createView() },
-				{ binding: 1, resource: this.previewSampler },
-				{ binding: 2, resource: { buffer: this.previewUniform } },
-			],
-		});
-		const encoder = this.device.createCommandEncoder();
-		const pass = encoder.beginRenderPass({
-			colorAttachments: [
-				{
-					view: this.ctx.getCurrentTexture().createView(),
-					loadOp: "clear",
-					storeOp: "store",
-					clearValue: { r: 0.07, g: 0.07, b: 0.07, a: 1 },
-				},
-			],
-		});
-		pass.setPipeline(this.previewPipeline);
-		pass.setBindGroup(0, bindGroup);
-		pass.draw(3);
-		pass.end();
-		this.device.queue.submit([encoder.finish()]);
-		await this.device.queue.onSubmittedWorkDone();
 	}
 	private async renderLatest() {
+		// Only one point frame can be in flight. While it runs, retain only the newest
+		// requested camera instead of queueing a backlog of stale pointer positions.
 		while (this.pending && !this.stopped) {
 			this.pending = false;
-			await this.renderFrame(this.revision);
+			await this.renderFrame(this.revision, this.live);
 		}
 	}
-	private async renderFrame(revision: number): Promise<void> {
-		await this.previewActive;
-		if (this.stopped || revision !== this.revision) return;
+	private async renderFrame(revision: number, live: boolean) {
+		if (this.stopped || revision !== this.revision || !this.bindGroup) return;
 		this.resize();
-		if (!this.bindGroup) return;
-		const bindGroup = this.bindGroup,
-			count = this.count;
-		const camera = this.camera();
 		const { minX, maxX, minY, maxY } = this.bounds;
-		const w = this.canvas.width;
-		const h = this.canvas.height;
-		const range = Math.max(maxX - minX, maxY - minY) || 1;
-		// Fit the bounding square into the viewport, preserving aspect.
-		const aspect = w / h;
+		const w = this.canvas.width,
+			h = this.canvas.height;
+		const range = Math.max(maxX - minX, maxY - minY) || 1,
+			aspect = w / h;
 		const sx = (1.8 / range) * this.zoom * (aspect > 1 ? 1 / aspect : 1);
 		const sy = (1.8 / range) * this.zoom * (aspect > 1 ? 1 : aspect);
-		const cx = (minX + maxX) / 2;
-		const cy = (minY + maxY) / 2;
-		const dpr = this.pixelRatio;
-		const view = new Float32Array([
-			sx,
-			sy,
-			-cx * sx + this.panX,
-			-cy * sy + this.panY,
-			(this.pointPx * dpr * 2) / w,
-			(this.pointPx * dpr * 2) / h,
+		this.device.queue.writeBuffer(
+			this.viewBuf,
 			0,
-			0,
-		]);
-		this.device.queue.writeBuffer(this.viewBuf, 0, view);
-		const target = this.target as GPUTexture;
-		const batches = renderBatches(count);
+			new Float32Array([
+				sx,
+				sy,
+				(-(minX + maxX) / 2) * sx + this.panX,
+				(-(minY + maxY) / 2) * sy + this.panY,
+				(this.pointPx * this.pixelRatio * 2) / w,
+				(this.pointPx * this.pixelRatio * 2) / h,
+				0,
+				0,
+			]),
+		);
+		const bindGroup = this.bindGroup,
+			count = this.count;
+		if (!live)
+			this.target ??= this.device.createTexture({
+				size: [w, h],
+				format: this.format,
+				usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+			});
+		const target = live ? this.ctx.getCurrentTexture() : (this.target as GPUTexture);
+		const batches = live ? [{ first: 0, count }] : renderBatches(count);
 		if (!batches.length) batches.push({ first: 0, count: 0 });
 		for (const batch of batches) {
 			if (this.stopped || revision !== this.revision) return;
@@ -312,15 +212,13 @@ export class PointRenderer {
 			});
 			pass.setPipeline(this.pipeline);
 			pass.setBindGroup(0, bindGroup);
-			if (batch.count) pass.draw(6, batch.count, 0, batch.first);
+			if (batch.count) pass.draw(4, batch.count, 0, batch.first);
 			pass.end();
 			this.device.queue.submit([enc.finish()]);
 			await this.device.queue.onSubmittedWorkDone();
-			this.onProgress(batch.first + batch.count, count);
+			if (!live) this.onProgress(batch.first + batch.count, count);
 		}
-		if (this.stopped || revision !== this.revision) return;
-		// Acquire the canvas texture only when ready to present. It must not be kept
-		// across asynchronous batches; the persistent offscreen target holds them.
+		if (live || this.stopped || revision !== this.revision) return;
 		const present = this.device.createCommandEncoder();
 		present.copyTextureToTexture({ texture: target }, { texture: this.ctx.getCurrentTexture() }, [
 			w,
@@ -328,15 +226,11 @@ export class PointRenderer {
 		]);
 		this.device.queue.submit([present.finish()]);
 		await this.device.queue.onSubmittedWorkDone();
-		// The completed image stays immutable while the next image is rebuilt.
-		this.target = this.completed;
-		this.completed = target;
-		this.completedCamera = camera;
 	}
 
-	private attachInteraction(): void {
-		const pointers = new Map<number, { x: number; y: number }>();
-		const c = this.canvas;
+	private attachInteraction() {
+		const pointers = new Map<number, { x: number; y: number }>(),
+			c = this.canvas;
 		const centre = () => {
 			const points = [...pointers.values()].slice(0, 2),
 				a = points[0];
@@ -360,13 +254,17 @@ export class PointRenderer {
 			const after = centre();
 			if (!before || !after) return;
 			const rect = c.getBoundingClientRect();
-			const fromX = ((before.x - rect.left) / rect.width) * 2 - 1,
-				fromY = 1 - ((before.y - rect.top) / rect.height) * 2;
-			const toX = ((after.x - rect.left) / rect.width) * 2 - 1,
-				toY = 1 - ((after.y - rect.top) / rect.height) * 2;
-			const factor =
-				before.distance > 0 && after.distance > 0 ? after.distance / before.distance : 1;
-			Object.assign(this, moveCamera(this.camera(), fromX, fromY, toX, toY, factor));
+			Object.assign(
+				this,
+				moveCamera(
+					this.camera(),
+					((before.x - rect.left) / rect.width) * 2 - 1,
+					1 - ((before.y - rect.top) / rect.height) * 2,
+					((after.x - rect.left) / rect.width) * 2 - 1,
+					1 - ((after.y - rect.top) / rect.height) * 2,
+					before.distance > 0 && after.distance > 0 ? after.distance / before.distance : 1,
+				),
+			);
 			this.gesture();
 		});
 		const end = (e: PointerEvent) => {
@@ -380,11 +278,19 @@ export class PointRenderer {
 			(e) => {
 				e.preventDefault();
 				if (!this.dataReady) return;
-				const f = Math.exp(-Math.max(-2000, Math.min(2000, e.deltaY)) * 0.0015);
-				// zoom about cursor
-				const nx = (e.offsetX / c.clientWidth) * 2 - 1;
-				const ny = 1 - (e.offsetY / c.clientHeight) * 2;
-				Object.assign(this, moveCamera(this.camera(), nx, ny, nx, ny, f));
+				const nx = (e.offsetX / c.clientWidth) * 2 - 1,
+					ny = 1 - (e.offsetY / c.clientHeight) * 2;
+				Object.assign(
+					this,
+					moveCamera(
+						this.camera(),
+						nx,
+						ny,
+						nx,
+						ny,
+						Math.exp(-Math.max(-2000, Math.min(2000, e.deltaY)) * 0.0015),
+					),
+				);
 				this.gesture();
 			},
 			{ passive: false },
