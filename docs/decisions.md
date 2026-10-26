@@ -1662,3 +1662,36 @@ event, and obtains identical pixels with no validation errors. These checks supp
 the implementation, not a diagnosis of the user's mobile driver or an on-device
 success claim. Calcifer's browser diagnostic connection was unavailable during
 this change; no Artemis GPU work was used.
+
+## 2026-10-26 — Separate gesture presentation from point rebuilding
+
+**User acceptance/regression:** the bounded-draw release loads on the phone, but
+pan and zoom became laggy on both mobile and desktop. Full point rebuilding on
+every gesture repeatedly submitted/drained about sixty batches before presenting.
+
+Keep an immutable completed image and a separate rebuild target. During gestures,
+present that image with the live camera transform using one textured triangle,
+coalesced to animation frames and capped at two pending GPU submissions. After
+150 ms without movement, rebuild all points at the final camera with the existing
+bounded batches. Obsolete rebuilds cancel between batches. Preview imagery can
+temporarily magnify pixels or expose background outside its old extent; exact
+point rendering replaces it after settling. No events, memberships or analysis
+values are sampled away. Touch supports two-pointer pinch/midpoint movement and
+pointer cancellation as well as drag; desktop wheel zoom follows the cursor.
+
+**Measured correction cycle:** the first browser test passed desktop motion but
+failed after switching to compact layout. Separating the canvas's intrinsic pixel
+size from flex layout (absolute positioning within the bounded map container)
+resolved the compact test. Allowing two lightweight previews in flight rather
+than one also eliminated observed preview-frame skips. The repeated full-dataset
+test used the existing valid computed cache, with no retraining required.
+
+**Measured:** Calcifer Chrome 155 produced 90 previews for 90 animation-frame
+gesture updates, zero point instances during motion, and complete 3,885,530-event
+refinement afterward for desktop pan/wheel and compact pan/pinch. Observed frame
+cadence was approximately 33 ms on that test setup, not evidence of 60/120 fps or
+Android hardware performance. Native Dawn testing also verified exact translated
+preview pixels and retained single-draw/batched point parity. CPU tests cover
+coalescing, quiet-period refinement, transforms, pointer cancellation and bounded
+preview queueing. Actual phone interaction acceptance remains user-owned; no
+Artemis GPU work was used.

@@ -43,12 +43,25 @@ it("batched GPU rendering including the tail matches a single ordered draw", asy
 		},
 	);
 	vi.stubGlobal("navigator", { gpu: { getPreferredCanvasFormat: () => format } });
+	const events = new Map<string, (event: Partial<PointerEvent>) => void>();
+	let frame: FrameRequestCallback | null = null;
+	vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+		frame = callback;
+		return 1;
+	});
+	vi.stubGlobal("cancelAnimationFrame", () => {
+		frame = null;
+	});
 	const canvas = {
 		width: size,
 		height: size,
 		clientWidth: size,
 		clientHeight: size,
-		addEventListener() {},
+		addEventListener(name: string, callback: (event: Partial<PointerEvent>) => void) {
+			events.set(name, callback);
+		},
+		setPointerCapture() {},
+		getBoundingClientRect: () => ({ left: 0, top: 0, width: size, height: size }),
 		getContext: () => ({ configure() {}, getCurrentTexture: () => actual }),
 	} as unknown as HTMLCanvasElement;
 	const renderer = new PointRenderer(device, canvas);
@@ -114,6 +127,42 @@ it("batched GPU rendering including the tail matches a single ordered draw", asy
 	const pixels = buffers.map((buffer) => new Uint8Array(buffer.getMappedRange().slice(0)));
 	expect(pixels[0]).toEqual(pixels[1]);
 	expect(pixels[0]?.some((value, index) => index % 4 === 1 && value > 100)).toBe(true);
+	// A gesture moves the completed GPU image immediately, without revisiting points.
+	events.get("pointerdown")?.({ pointerId: 1, pointerType: "touch", clientX: 0, clientY: 0 });
+	events.get("pointermove")?.({ pointerId: 1, clientX: 16, clientY: 0 });
+	expect(frame).not.toBeNull();
+	(frame as unknown as FrameRequestCallback)(0);
+	await device.queue.onSubmittedWorkDone();
+	await renderer.pause();
+	const shifted = device.createBuffer({
+		size: size * size * 4,
+		usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+	});
+	const copy = device.createCommandEncoder();
+	copy.copyTextureToBuffer({ texture: actual }, { buffer: shifted, bytesPerRow: size * 4 }, [
+		size,
+		size,
+	]);
+	device.queue.submit([copy.finish()]);
+	await shifted.mapAsync(GPUMapMode.READ);
+	const moved = new Uint8Array(shifted.getMappedRange());
+	let difference = 0;
+	for (let y = 0; y < size; y++)
+		for (let x = 0; x < size; x++)
+			for (let c = 0; c < 4; c++) {
+				const reference =
+					x < 16
+						? c === 3
+							? 255
+							: 18
+						: ((pixels[0] as Uint8Array)[(y * size + x - 16) * 4 + c] as number);
+				difference = Math.max(
+					difference,
+					Math.abs((moved[(y * size + x) * 4 + c] as number) - reference),
+				);
+			}
+	expect(difference).toBe(0);
+	shifted.destroy();
 	expect(await device.popErrorScope()).toBeNull();
 	for (const buffer of [...buffers, pos, color, view]) buffer.destroy();
 	actual.destroy();
