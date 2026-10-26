@@ -12,6 +12,22 @@ import type { LoadedWorkspace } from "./workspace.js";
 declare const __FLOW_ATLAS_ENGINE_ID__: string;
 const HEAD = "map:current";
 const MAX_BYTES = 512 * 2 ** 20;
+const READBACK_CHUNK_BYTES = 4 * 2 ** 20;
+
+/** Keep temporary GPU staging small even when a cached channel contains millions of rows. */
+async function readCacheBuffer(
+	device: GPUDevice,
+	buffer: GPUBuffer,
+	bytes: number,
+): Promise<ArrayBuffer> {
+	const output = new Uint32Array(bytes / 4);
+	for (let offset = 0; offset < bytes; offset += READBACK_CHUNK_BYTES) {
+		const length = Math.min(READBACK_CHUNK_BYTES, bytes - offset);
+		const chunk = await readback(device, buffer, Uint32Array, length, offset);
+		output.set(chunk, offset / 4);
+	}
+	return output.buffer;
+}
 type Metadata = Pick<
 	LoadedWorkspace,
 	| "n"
@@ -256,16 +272,16 @@ export async function saveWorkspaceCache(
 						? workspace.labels
 						: workspace.embedding;
 			if (!buffer) throw new Error("Missing cache buffer");
-			const data = await readback(device, buffer, Uint32Array, bytes),
+			const data = await readCacheBuffer(device, buffer, bytes),
 				storageKey = `map-data:${generation}:${slot}`;
 			written.push(storageKey);
-			if (!(await cache.put(storageKey, new Blob([data.buffer as ArrayBuffer]))))
+			if (!(await cache.put(storageKey, new Blob([data]))))
 				throw new Error("Cache write unavailable");
 			buffers.push({
 				slot,
 				key: storageKey,
 				bytes,
-				sha256: await bytesHash(data.buffer as ArrayBuffer),
+				sha256: await bytesHash(data),
 			});
 		}
 		const payload = {

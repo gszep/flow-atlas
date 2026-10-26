@@ -1632,3 +1632,33 @@ cache persistence), and a new-tab computed-map restore took 2.048 s with zero
 SOM/projection work and zero FCS/WSP requests. Both supplied all 3,885,530 events
 to the renderer. These are local feasibility observations, not a universal latency
 guarantee or numerical/biological parity claim.
+
+## 2026-10-26 — Bound the projection-to-display handoff
+
+**Reported:** desktop works; mobile loses its GPU device after **100%** projection
+(the user's initial 109% report was corrected). This is not evidence of progress
+overflow. The device is reachable through Tailscale, but the tested SSH, ADB and
+browser-debug endpoints are closed. Exact mobile browser/driver loss diagnostics
+remain unavailable; a phone fix is **unverified** until on-device acceptance.
+
+**Verified in source:** first display previously issued a single draw over
+3,885,530 instances, and recolouring was also one full-data dispatch. Bound both
+to 65,536-event batches with queue drains. Preserve event order and the final tail.
+Accumulate into a persistent offscreen texture, then acquire and copy to the canvas
+only when the complete current frame is ready. Serialize redraws and cancel
+superseded frames between batches; do not draw uninitialized colours. Limit compact
+canvas backing density to 1.5 and two million pixels, without selecting fewer events.
+
+Release the full feature matrix before display preparation, remove the unused BMU
+computation/output, and cap derived-cache GPU staging at 4 MiB. The full columns,
+memberships and coordinates remain available; training is still capped at 100,000.
+Device-loss errors retain their last stage and reason instead of being overwritten
+by a later generic exception.
+
+**Measured:** CPU scheduling tests verify complete event coverage, tail offsets,
+drains, cancellation and compact canvas budgets. A native Dawn GPU test compares
+the batched renderer against an ordered single draw, including a distinct final
+event, and obtains identical pixels with no validation errors. These checks support
+the implementation, not a diagnosis of the user's mobile driver or an on-device
+success claim. Calcifer's browser diagnostic connection was unavailable during
+this change; no Artemis GPU work was used.

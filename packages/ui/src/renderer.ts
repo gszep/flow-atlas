@@ -1,4 +1,5 @@
 import pointsSrc from "./points.wgsl?raw";
+import { canvasBudget, renderBatches } from "./render-budget.js";
 
 export interface Bounds {
 	minX: number;
@@ -14,6 +15,13 @@ export class PointRenderer {
 	private bindGroup: GPUBindGroup | null = null;
 	private count = 0;
 	private readonly format: GPUTextureFormat;
+	private target: GPUTexture | null = null;
+	private revision = 0;
+	private pending = false;
+	private active: Promise<void> | null = null;
+	private dataReady = false;
+	private stopped = false;
+	private pixelRatio = 1;
 	zoom = 1;
 	panX = 0;
 	panY = 0;
@@ -23,10 +31,17 @@ export class PointRenderer {
 	constructor(
 		readonly device: GPUDevice,
 		readonly canvas: HTMLCanvasElement,
+		private readonly onError: (error: unknown) => void = console.error,
+		private readonly onProgress: (done: number, total: number) => void = () => {},
 	) {
 		this.ctx = canvas.getContext("webgpu") as GPUCanvasContext;
 		this.format = navigator.gpu.getPreferredCanvasFormat();
-		this.ctx.configure({ device, format: this.format, alphaMode: "premultiplied" });
+		this.ctx.configure({
+			device,
+			format: this.format,
+			alphaMode: "premultiplied",
+			usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST,
+		});
 		const module = device.createShaderModule({ code: pointsSrc });
 		this.pipeline = device.createRenderPipeline({
 			layout: "auto",
@@ -51,9 +66,19 @@ export class PointRenderer {
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		});
 		this.attachInteraction();
+		void device.lost.then(() => {
+			this.stopped = true;
+			this.pending = false;
+			this.revision++;
+			this.target?.destroy();
+			this.target = null;
+		});
 	}
 
 	setData(pos: GPUBuffer, color: GPUBuffer, count: number, bounds: Bounds): void {
+		this.revision++;
+		this.pending = false;
+		this.dataReady = false;
 		this.count = count;
 		this.bounds = bounds;
 		this.bindGroup = this.device.createBindGroup({
@@ -67,22 +92,66 @@ export class PointRenderer {
 		this.zoom = 1;
 		this.panX = 0;
 		this.panY = 0;
-		this.draw();
+		// Colour preparation must finish before the first draw; do not submit millions
+		// of invisible/uninitialized instances as an intermediate frame.
 	}
 
 	private resize(): void {
-		const dpr = window.devicePixelRatio || 1;
-		const w = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
-		const h = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+		const budget = canvasBudget(
+			this.canvas.clientWidth,
+			this.canvas.clientHeight,
+			window.devicePixelRatio,
+			this.device.limits.maxTextureDimension2D,
+			matchMedia("(max-width: 760px), (pointer: coarse)").matches,
+		);
+		const w = budget.width,
+			h = budget.height;
+		this.pixelRatio = budget.ratio;
 		if (this.canvas.width !== w || this.canvas.height !== h) {
 			this.canvas.width = w;
 			this.canvas.height = h;
+			this.target?.destroy();
+			this.target = null;
 		}
+		this.target ??= this.device.createTexture({
+			size: [w, h],
+			format: this.format,
+			usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+		});
 	}
 
-	draw(): void {
+	async pause(): Promise<void> {
+		this.dataReady = false;
+		this.pending = false;
+		this.revision++;
+		await this.active;
+	}
+
+	draw(): Promise<void> {
+		if (this.stopped) return Promise.resolve();
+		this.dataReady = true;
+		this.pending = true;
+		this.revision++;
+		if (!this.active)
+			this.active = this.renderLatest().finally(() => {
+				this.active = null;
+			});
+		return this.active;
+	}
+	private requestDraw() {
+		if (this.dataReady) void this.draw().catch(this.onError);
+	}
+	private async renderLatest() {
+		while (this.pending && !this.stopped) {
+			this.pending = false;
+			await this.renderFrame(this.revision);
+		}
+	}
+	private async renderFrame(revision: number): Promise<void> {
 		this.resize();
 		if (!this.bindGroup) return;
+		const bindGroup = this.bindGroup,
+			count = this.count;
 		const { minX, maxX, minY, maxY } = this.bounds;
 		const w = this.canvas.width;
 		const h = this.canvas.height;
@@ -93,7 +162,7 @@ export class PointRenderer {
 		const sy = (1.8 / range) * this.zoom * (aspect > 1 ? 1 : aspect);
 		const cx = (minX + maxX) / 2;
 		const cy = (minY + maxY) / 2;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = this.pixelRatio;
 		const view = new Float32Array([
 			sx,
 			sy,
@@ -105,22 +174,40 @@ export class PointRenderer {
 			0,
 		]);
 		this.device.queue.writeBuffer(this.viewBuf, 0, view);
-		const enc = this.device.createCommandEncoder();
-		const pass = enc.beginRenderPass({
-			colorAttachments: [
-				{
-					view: this.ctx.getCurrentTexture().createView(),
-					clearValue: { r: 0.07, g: 0.07, b: 0.07, a: 1 },
-					loadOp: "clear",
-					storeOp: "store",
-				},
-			],
-		});
-		pass.setPipeline(this.pipeline);
-		pass.setBindGroup(0, this.bindGroup);
-		pass.draw(6, this.count);
-		pass.end();
-		this.device.queue.submit([enc.finish()]);
+		const target = this.target as GPUTexture;
+		const batches = renderBatches(count);
+		if (!batches.length) batches.push({ first: 0, count: 0 });
+		for (const batch of batches) {
+			if (this.stopped || revision !== this.revision) return;
+			const enc = this.device.createCommandEncoder();
+			const pass = enc.beginRenderPass({
+				colorAttachments: [
+					{
+						view: target.createView(),
+						clearValue: { r: 0.07, g: 0.07, b: 0.07, a: 1 },
+						loadOp: batch.first === 0 ? "clear" : "load",
+						storeOp: "store",
+					},
+				],
+			});
+			pass.setPipeline(this.pipeline);
+			pass.setBindGroup(0, bindGroup);
+			if (batch.count) pass.draw(6, batch.count, 0, batch.first);
+			pass.end();
+			this.device.queue.submit([enc.finish()]);
+			await this.device.queue.onSubmittedWorkDone();
+			this.onProgress(batch.first + batch.count, count);
+		}
+		if (this.stopped || revision !== this.revision) return;
+		// Acquire the canvas texture only when ready to present. It must not be kept
+		// across asynchronous batches; the persistent offscreen target holds them.
+		const present = this.device.createCommandEncoder();
+		present.copyTextureToTexture({ texture: target }, { texture: this.ctx.getCurrentTexture() }, [
+			w,
+			h,
+		]);
+		this.device.queue.submit([present.finish()]);
+		await this.device.queue.onSubmittedWorkDone();
 	}
 
 	private attachInteraction(): void {
@@ -140,7 +227,7 @@ export class PointRenderer {
 			this.panY -= ((e.clientY - ly) / c.clientHeight) * 2;
 			lx = e.clientX;
 			ly = e.clientY;
-			this.draw();
+			this.requestDraw();
 		});
 		c.addEventListener("pointerup", () => {
 			dragging = false;
@@ -156,10 +243,10 @@ export class PointRenderer {
 				this.panX = nx - (nx - this.panX) * f;
 				this.panY = ny - (ny - this.panY) * f;
 				this.zoom *= f;
-				this.draw();
+				this.requestDraw();
 			},
 			{ passive: false },
 		);
-		new ResizeObserver(() => this.draw()).observe(c);
+		new ResizeObserver(() => this.requestDraw()).observe(c);
 	}
 }

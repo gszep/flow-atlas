@@ -446,9 +446,13 @@ export async function computeEmbedding(
 	await yieldToUi();
 	w.som = som;
 	const projected = await projectAllEvents(k, features, som, maxBinding, progress);
-	w.bmu = projected.bmu;
+	w.bmu = null;
 	w.embedding = projected.embedding;
 	await device.queue.onSubmittedWorkDone();
+	// The full feature matrix is no longer needed. Release it before display
+	// readback/allocation, rather than overlapping that peak with first rendering.
+	features.buffer.destroy();
+	progress("Preparing display…");
 	const mapEmbedProjectionMs = performance.now() - projectionStarted;
 	const boundsStarted = performance.now();
 	// View bounds from a bounded prefix, not a claim to enumerate all output extrema.
@@ -473,7 +477,6 @@ export async function computeEmbedding(
 		minY: Math.max(minY, -2),
 		maxY: Math.min(maxY, ydim + 1),
 	};
-	features.buffer.destroy();
 	if (
 		!Object.values(w.bounds).every(Number.isFinite) ||
 		w.bounds.minX >= w.bounds.maxX ||
