@@ -3,7 +3,6 @@ import {
 	embedSom,
 	type FeatureMatrix,
 	type Kernels,
-	mapToSom,
 	readback,
 	type Som,
 	windows,
@@ -36,7 +35,6 @@ export async function projectAllEvents(
 ) {
 	const { device } = kernels,
 		{ n, d } = features;
-	const bmu = createStorage(device, n * 4, undefined, "all.bmu");
 	const embedding = createStorage(device, n * 8, undefined, "all.embedding");
 	let complete = false;
 	try {
@@ -73,10 +71,8 @@ export async function projectAllEvents(
 				);
 				device.queue.submit([copyIn.finish()]);
 				const chunk = { buffer: input, n: window.count, d };
-				const chunkBmu = mapToSom(scopedKernels, chunk, som, maxBinding);
 				const chunkEmbedding = embedSom(scopedKernels, chunk, som, maxBinding);
 				const copyOut = device.createCommandEncoder();
-				copyOut.copyBufferToBuffer(chunkBmu, 0, bmu, window.start * 4, window.count * 4);
 				copyOut.copyBufferToBuffer(
 					chunkEmbedding,
 					0,
@@ -107,10 +103,9 @@ export async function projectAllEvents(
 			progress(`Projecting all events… ${Math.round(((window.start + window.count) / n) * 100)}%`);
 		}
 		complete = true;
-		return { bmu, embedding };
+		return { embedding };
 	} finally {
 		if (!complete) {
-			bmu.destroy();
 			embedding.destroy();
 		}
 	}

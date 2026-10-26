@@ -1,4 +1,4 @@
-import { acquireDevice, createStorage, readback, upload } from "@flow-atlas/compute";
+import { acquireDevice, bind, createStorage, readback, upload } from "@flow-atlas/compute";
 import { browserCache } from "./browser-cache.js";
 import colorizeSrc from "./colorize.wgsl?raw";
 import {
@@ -12,6 +12,7 @@ import {
 	loadPublicationManifest,
 	PUBLICATION_EMBED_OPTIONS,
 } from "./publication.js";
+import { renderBatches } from "./render-budget.js";
 import { PointRenderer } from "./renderer.js";
 import {
 	computeEmbedding,
@@ -28,7 +29,9 @@ const progressBar = $<HTMLProgressElement>("download-progress");
 const retry = $<HTMLButtonElement>("retry-load");
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const clearRecord = () => clearComputationRecord($("computation-record"));
+let lastStage = "initialization";
 const log = (value: string) => {
+	lastStage = value;
 	status.setAttribute("role", "status");
 	status.textContent = value;
 	detail.textContent = "";
@@ -136,13 +139,30 @@ async function main() {
 	device.lost.then((info) => {
 		deviceLost = true;
 		loadAbort?.abort(new Error("GPU device lost"));
-		showError(new Error(`GPU device lost: ${info.message}. Retry to reload.`));
+		showError(
+			new Error(
+				`GPU device lost (${info.reason}) after ${lastStage}: ${info.message}. Retry to reload.`,
+			),
+		);
 		$("canvas").style.pointerEvents = "none";
 		retry.disabled = false;
 	});
 	let renderer: PointRenderer, colorize: GPUComputePipeline;
 	try {
-		renderer = new PointRenderer(device, $<HTMLCanvasElement>("canvas"));
+		renderer = new PointRenderer(
+			device,
+			$<HTMLCanvasElement>("canvas"),
+			(error) => {
+				if (!deviceLost) showError(error);
+			},
+			(done, total) => {
+				lastStage = "drawing the map";
+				if (!deviceLost && gate.busy && total > 0) {
+					status.textContent = "Drawing map…";
+					progressBar.value = (done / total) * 100;
+				}
+			},
+		);
 		colorize = device.createComputePipeline({
 			layout: "auto",
 			compute: { module: device.createShaderModule({ code: colorizeSrc }), entryPoint: "main" },
@@ -170,6 +190,8 @@ async function main() {
 
 	async function recolor() {
 		if (!ws?.embedding || !colorBuf) return;
+		await renderer.pause();
+		lastStage = "preparing colours";
 		const words = ws.words,
 			sel = new Uint32Array(words);
 		for (const p of popSelected)
@@ -237,34 +259,38 @@ async function main() {
 				size: 48,
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 			});
-			device.queue.writeBuffer(params, 0, pb);
 			const visible = upload(temporary.device, sampleVisible),
 				selection = upload(temporary.device, sel),
 				colors = upload(temporary.device, popColor),
 				ramp = upload(temporary.device, palette);
-			const bg = device.createBindGroup({
-				layout: colorize.getBindGroupLayout(0),
-				entries: [
-					params,
-					ws.labels,
-					ws.sampleId,
-					visible,
-					selection,
-					colors,
-					channel,
-					ramp,
-					colorBuf,
-				].map((buffer, binding) => ({ binding, resource: { buffer } })),
-			});
-			const encoder = device.createCommandEncoder(),
-				pass = encoder.beginComputePass();
-			pass.setPipeline(colorize);
-			pass.setBindGroup(0, bg);
-			pass.dispatchWorkgroups(Math.ceil(ws.n / 256));
-			pass.end();
-			device.queue.submit([encoder.finish()]);
-			await device.queue.onSubmittedWorkDone();
-			renderer.draw();
+			for (const batch of renderBatches(ws.n)) {
+				const window = { start: batch.first, count: batch.count };
+				new Uint32Array(pb)[0] = batch.count;
+				device.queue.writeBuffer(params, 0, pb);
+				const bg = device.createBindGroup({
+					layout: colorize.getBindGroupLayout(0),
+					entries: [
+						{ buffer: params },
+						bind(ws.labels, window, words * 4),
+						bind(ws.sampleId, window, 4),
+						{ buffer: visible },
+						{ buffer: selection },
+						{ buffer: colors },
+						bind(channel, window, 4),
+						{ buffer: ramp },
+						bind(colorBuf, window, 4),
+					].map((resource, binding) => ({ binding, resource })),
+				});
+				const encoder = device.createCommandEncoder(),
+					pass = encoder.beginComputePass();
+				pass.setPipeline(colorize);
+				pass.setBindGroup(0, bg);
+				pass.dispatchWorkgroups(Math.ceil(batch.count / 256));
+				pass.end();
+				device.queue.submit([encoder.finish()]);
+				await device.queue.onSubmittedWorkDone();
+			}
+			await renderer.draw();
 			await device.queue.onSubmittedWorkDone();
 		} finally {
 			await device.queue.onSubmittedWorkDone().catch(() => {});
@@ -272,7 +298,10 @@ async function main() {
 		}
 	}
 	function scheduleRecolor() {
-		if (!gate.busy && !deviceLost) repaint = repaint.then(recolor).catch(showError);
+		if (!gate.busy && !deviceLost)
+			repaint = repaint.then(recolor).catch((error) => {
+				if (!deviceLost) showError(error);
+			});
 	}
 	function buildLegend() {
 		if (!ws) return;
@@ -409,6 +438,7 @@ async function main() {
 		try {
 			const t0 = performance.now();
 			await repaint;
+			await renderer.pause();
 			clearMap();
 			await device.queue.onSubmittedWorkDone();
 			currentBuffers?.releaseExcept();
@@ -595,6 +625,7 @@ async function main() {
 			);
 			if (!cached) {
 				const readyWorkspace = ws;
+				lastStage = "saving the map cache";
 				void saveWorkspaceCache(
 					browserCache,
 					cacheKey,
@@ -622,7 +653,7 @@ async function main() {
 			}
 			ws = null;
 			colorBuf = null;
-			showError(error);
+			if (!deviceLost) showError(error);
 		} finally {
 			if (scopeOpen) await device.popErrorScope().catch(() => null);
 			await device.queue.onSubmittedWorkDone().catch(() => {});
@@ -639,7 +670,9 @@ async function main() {
 	};
 	$<HTMLInputElement>("size").oninput = (event) => {
 		renderer.pointPx = Number((event.target as HTMLInputElement).value);
-		renderer.draw();
+		void renderer.draw().catch((error) => {
+			if (!deviceLost) showError(error);
+		});
 	};
 	// The bare URL and historical query strings all use this one quick-demo path.
 	void run();
