@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { moveCamera, previewTransform } from "../src/map-camera.js";
+import { moveCamera } from "../src/map-camera.js";
 import { canvasBudget, renderBatches } from "../src/render-budget.js";
 import { PointRenderer } from "../src/renderer.js";
 
@@ -124,8 +124,8 @@ it("does not draw uncoloured data, drains batches, and only then acquires the ca
 	expect(f.calls).toEqual([]);
 	await renderer.draw();
 	expect(f.draws).toEqual([
-		[6, 65536, 0, 0],
-		[6, 1, 0, 65536],
+		[4, 65536, 0, 0],
+		[4, 1, 0, 65536],
 	]);
 	expect(f.calls).toEqual([
 		"clear",
@@ -162,7 +162,7 @@ it("cancels superseded batches before presenting and starts a fresh frame", asyn
 	expect(f.calls).toContain("present");
 });
 
-it("coalesces wheel events into one image preview, then refines all points after settling", async () => {
+it("coalesces wheel events into one live full-point draw with no later refinement", async () => {
 	vi.useFakeTimers();
 	const f = rendererFixture(),
 		renderer = new PointRenderer(f.device, f.canvas);
@@ -183,12 +183,10 @@ it("coalesces wheel events into one image preview, then refines all points after
 	f.frames.clear();
 	callback?.(0);
 	await vi.advanceTimersByTimeAsync(0);
-	expect(f.draws).toEqual([[3]]);
-	await vi.advanceTimersByTimeAsync(149);
-	expect(f.draws).toEqual([[3]]);
-	await vi.advanceTimersByTimeAsync(1);
-	const refined = f.draws.filter((draw) => draw[0] === 6);
-	expect(refined.reduce((sum, draw) => sum + (draw[1] ?? 0), 0)).toBe(3885530);
+	expect(f.draws).toEqual([[4, 3885530, 0, 0]]);
+	expect(f.calls).not.toContain("present");
+	await vi.advanceTimersByTimeAsync(500);
+	expect(f.draws).toEqual([[4, 3885530, 0, 0]]);
 });
 
 it("pinches around the moving midpoint and handles pointer cancellation", async () => {
@@ -209,15 +207,16 @@ it("pinches around the moving midpoint and handles pointer cancellation", async 
 	expect(f.frames.size).toBe(0);
 });
 
-it("preview and gesture transforms preserve a point's camera coordinates", () => {
+it("gesture transforms preserve the point under the moving midpoint", () => {
 	const completed = { zoom: 2, panX: 0.25, panY: -0.5 };
 	const live = moveCamera(completed, 0.4, -0.2, 0.6, 0.1, 1.5);
-	const transform = previewTransform(completed, live);
-	expect(0.4 * (transform[0] as number) + (transform[2] as number)).toBeCloseTo(0.6);
-	expect(-0.2 * (transform[1] as number) + (transform[3] as number)).toBeCloseTo(0.1);
+	const worldX = (0.4 - completed.panX) / completed.zoom;
+	const worldY = (-0.2 - completed.panY) / completed.zoom;
+	expect(worldX * live.zoom + live.panX).toBeCloseTo(0.6);
+	expect(worldY * live.zoom + live.panY).toBeCloseTo(0.1);
 });
 
-it("caps queued gesture previews at two even when the GPU is behind", async () => {
+it("keeps only one point frame in flight and cancels the pending camera on pause", async () => {
 	vi.useFakeTimers();
 	const f = rendererFixture(),
 		renderer = new PointRenderer(f.device, f.canvas);
@@ -237,8 +236,8 @@ it("caps queued gesture previews at two even when the GPU is behind", async () =
 		f.frames.clear();
 		callback?.(0);
 	}
-	expect(f.draws).toEqual([[3], [3]]);
-	expect(releases).toHaveLength(2);
+	expect(f.draws).toEqual([[4, 1, 0, 0]]);
+	expect(releases).toHaveLength(1);
 	const paused = renderer.pause();
 	completion.mockRestore();
 	for (const release of releases) release();

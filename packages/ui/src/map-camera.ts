@@ -4,17 +4,6 @@ export interface Camera {
 	panY: number;
 }
 
-/** Map the completed image's clip coordinates into the live gesture camera. */
-export function previewTransform(completed: Camera, live: Camera): Float32Array<ArrayBuffer> {
-	const scale = live.zoom / completed.zoom;
-	return new Float32Array([
-		scale,
-		scale,
-		live.panX - scale * completed.panX,
-		live.panY - scale * completed.panY,
-	]);
-}
-
 /** Keep the data point under the old gesture centre under the new one. */
 export function moveCamera(
 	camera: Camera,

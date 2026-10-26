@@ -1,7 +1,7 @@
 import { afterAll, expect, it, vi } from "vitest";
 import { upload } from "../../compute/src/buffers.js";
 import { getDevice, releaseDevice } from "../../compute/test/setup.js";
-import pointsSrc from "../src/points.wgsl?raw";
+import stripSrc from "../src/points.wgsl?raw";
 import { PointRenderer } from "../src/renderer.js";
 
 afterAll(() => {
@@ -9,7 +9,7 @@ afterAll(() => {
 	releaseDevice();
 });
 
-it("batched GPU rendering including the tail matches a single ordered draw", async () => {
+it("four-vertex batched and live rendering match the original six-vertex point image", async () => {
 	const { device } = await getDevice();
 	device.pushErrorScope("validation");
 	const size = 64,
@@ -67,7 +67,13 @@ it("batched GPU rendering including the tail matches a single ordered draw", asy
 	const renderer = new PointRenderer(device, canvas);
 	renderer.setData(pos, color, n, { minX: 0, maxX: 1, minY: 0, maxY: 1 });
 	await renderer.draw();
-	const module = device.createShaderModule({ code: pointsSrc });
+	// Retain the original six-vertex tessellation as the appearance oracle.
+	const originalSrc = stripSrc.replace(
+		"array<vec2f, 4>(vec2f(-1,-1), vec2f(1,-1), vec2f(-1,1), vec2f(1,1))",
+		"array<vec2f, 6>(vec2f(-1,-1), vec2f(1,-1), vec2f(-1,1), vec2f(-1,1), vec2f(1,-1), vec2f(1,1))",
+	);
+	expect(originalSrc).not.toBe(stripSrc);
+	const module = device.createShaderModule({ code: originalSrc });
 	const pipeline = device.createRenderPipeline({
 		layout: "auto",
 		vertex: { module, entryPoint: "vs" },
@@ -127,7 +133,7 @@ it("batched GPU rendering including the tail matches a single ordered draw", asy
 	const pixels = buffers.map((buffer) => new Uint8Array(buffer.getMappedRange().slice(0)));
 	expect(pixels[0]).toEqual(pixels[1]);
 	expect(pixels[0]?.some((value, index) => index % 4 === 1 && value > 100)).toBe(true);
-	// A gesture moves the completed GPU image immediately, without revisiting points.
+	// A gesture redraws the resident points directly at the new camera.
 	events.get("pointerdown")?.({ pointerId: 1, pointerType: "touch", clientX: 0, clientY: 0 });
 	events.get("pointermove")?.({ pointerId: 1, clientX: 16, clientY: 0 });
 	expect(frame).not.toBeNull();
