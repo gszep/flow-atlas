@@ -10,6 +10,7 @@ export interface Bounds {
 }
 
 export class PointRenderer {
+	onViewChange: (() => void) | null = null;
 	private readonly ctx: GPUCanvasContext;
 	private readonly pipeline: GPURenderPipeline;
 	private readonly viewBuf: GPUBuffer;
@@ -126,8 +127,8 @@ export class PointRenderer {
 		this.revision++;
 		await this.active;
 	}
-	draw(): Promise<void> {
-		return this.enqueue(false);
+	draw(live = false): Promise<void> {
+		return this.enqueue(live);
 	}
 	private enqueue(live: boolean): Promise<void> {
 		if (this.stopped) return Promise.resolve();
@@ -147,6 +148,45 @@ export class PointRenderer {
 	private camera(): Camera {
 		return { zoom: this.zoom, panX: this.panX, panY: this.panY };
 	}
+	/** Embedding coordinates, distinct from raw-channel gate space. */
+	dataToScreen(point: { x: number; y: number }): { x: number; y: number } {
+		const { sx, sy, ox, oy } = this.screenTransform();
+		return {
+			x: ((point.x * sx + ox + 1) * this.canvas.clientWidth) / 2,
+			y: ((1 - point.y * sy - oy) * this.canvas.clientHeight) / 2,
+		};
+	}
+	screenToData(clientX: number, clientY: number): { x: number; y: number } {
+		const rect = this.canvas.getBoundingClientRect(),
+			{ sx, sy, ox, oy } = this.screenTransform();
+		return {
+			x: (((clientX - rect.left) / rect.width) * 2 - 1 - ox) / sx,
+			y: (1 - ((clientY - rect.top) / rect.height) * 2 - oy) / sy,
+		};
+	}
+	private screenTransform() {
+		const { minX, maxX, minY, maxY } = this.bounds;
+		const range = Math.max(maxX - minX, maxY - minY) || 1;
+		const aspect = this.canvas.width / this.canvas.height;
+		const sx = (1.8 / range) * this.zoom * (aspect > 1 ? 1 / aspect : 1);
+		const sy = (1.8 / range) * this.zoom * (aspect > 1 ? 1 : aspect);
+		return {
+			sx,
+			sy,
+			ox: (-(minX + maxX) / 2) * sx + this.panX,
+			oy: (-(minY + maxY) / 2) * sy + this.panY,
+		};
+	}
+	/** Change a display buffer without resetting the user's camera. */
+	setColors(pos: GPUBuffer, color: GPUBuffer): void {
+		this.bindGroup = this.device.createBindGroup({
+			layout: this.pipeline.getBindGroupLayout(0),
+			entries: [this.viewBuf, pos, color].map((buffer, binding) => ({
+				binding,
+				resource: { buffer },
+			})),
+		});
+	}
 	private gesture() {
 		if (!this.dataReady || this.stopped || this.gestureFrame !== null) return;
 		this.gestureFrame = requestAnimationFrame(() => {
@@ -165,6 +205,7 @@ export class PointRenderer {
 	private async renderFrame(revision: number, live: boolean) {
 		if (this.stopped || revision !== this.revision || !this.bindGroup) return;
 		this.resize();
+		this.onViewChange?.();
 		const { minX, maxX, minY, maxY } = this.bounds;
 		const w = this.canvas.width,
 			h = this.canvas.height;

@@ -46,7 +46,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
 const UI_DIST_DEFAULT = resolve(REPO_ROOT, "packages", "ui", "dist");
 const PINNED_PUBLICATION_MANIFEST = resolve(HERE, "publication-manifest.json");
-const SERVER_FILES = ["static-server.mjs", "package.json", "package-lock.json"];
+const SERVER_FILES = [
+	"static-server.mjs",
+	"demo-api.mjs",
+	"demo-tools.mjs",
+	"speech-relay.mjs",
+	"package.json",
+	"package-lock.json",
+];
 
 const ALLOWED_EXTENSIONS = new Set([
 	".html",

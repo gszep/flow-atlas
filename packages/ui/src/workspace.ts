@@ -44,6 +44,8 @@ export interface LoadedWorkspace {
 	sourceEventCount: number;
 	sampling: SamplingSummary | null;
 	channels: string[];
+	/** Preserved instrument/FCS channel identifiers behind each display marker. */
+	originalChannelNames?: string[][];
 	/** Transformed columns over all events; NaN where the sample lacks the channel. */
 	channelBuffers: GPUBuffer[];
 	channelPresent: Array<Array<{ start: number; count: number }>>;
@@ -333,6 +335,15 @@ export async function loadWorkspace(
 		sourceEventCount,
 		sampling,
 		channels: channelNames,
+		originalChannelNames: channelNames.map((name) => [
+			...new Set(
+				samples.flatMap((sample) =>
+					sample.channels
+						.filter((channel) => displayName(channel) === name)
+						.map((channel) => channel.name),
+				),
+			),
+		]),
 		channelBuffers,
 		channelPresent,
 		embedChannels: [...embedSet].sort((a, b) => a - b),

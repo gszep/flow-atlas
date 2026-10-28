@@ -6,6 +6,7 @@ import {
 	embeddingSettings,
 	publishComputationRecord,
 } from "./computation.js";
+import { DemoPanel } from "./demo-panel.js";
 import { createLoadGate, downloadPresentation } from "./loading.js";
 import {
 	downloadPublicationFiles,
@@ -29,6 +30,18 @@ const progressBar = $<HTMLProgressElement>("download-progress");
 const retry = $<HTMLButtonElement>("retry-load");
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const clearRecord = () => clearComputationRecord($("computation-record"));
+// Optional private demo-launch link: consume the application access code from
+// the fragment (never sent to the server in the URL), then remove it from history.
+const launchParams = new URLSearchParams(location.hash.slice(1));
+const demoAccessCode = launchParams.get("demo") ?? undefined;
+if (demoAccessCode) {
+	launchParams.delete("demo");
+	history.replaceState(
+		null,
+		"",
+		`${location.pathname}${location.search}${launchParams.size ? `#${launchParams}` : ""}`,
+	);
+}
 let lastStage = "initialization";
 const log = (value: string) => {
 	lastStage = value;
@@ -177,6 +190,8 @@ async function main() {
 	const clearMap = () =>
 		renderer.setData(emptyPositions, emptyColours, 0, { minX: -1, maxX: 1, minY: -1, maxY: 1 });
 	let currentBuffers: ReturnType<typeof bufferScope> | null = null;
+	let demo: DemoPanel | null = null;
+	let cacheSaving: Promise<unknown> = Promise.resolve();
 	let ws: LoadedWorkspace | null = null,
 		colorBuf: GPUBuffer | null = null;
 	let repaint: Promise<void> = Promise.resolve();
@@ -187,10 +202,13 @@ async function main() {
 	const popColors: string[] = [],
 		groupColors = new Map<string, string>();
 	const channelRange = new Map<string, [number, number]>();
+	let colorRevision = 0;
 
-	async function recolor() {
-		if (!ws?.embedding || !colorBuf) return;
+	async function recolor(marker = colorBy, revision = colorRevision, signal?: AbortSignal) {
+		const current = () => revision === colorRevision && !signal?.aborted && !deviceLost;
+		if (!ws?.embedding || !colorBuf || !current()) return;
 		await renderer.pause();
+		if (!current()) return;
 		lastStage = "preparing colours";
 		const words = ws.words,
 			sel = new Uint32Array(words);
@@ -218,15 +236,16 @@ async function main() {
 			ws.populations.map((_, index) => hexToRgba8(popColors[index] ?? DEFAULT_COLOR)),
 		);
 		const palette = Uint32Array.from(CHANNEL_PALETTE.map((hex) => hexToRgba8(hex)));
-		const mode = colorBy === "labels" ? 0 : 1;
+		const mode = marker === "labels" ? 0 : 1;
 		let channel = ws.channelBuffers[0] as GPUBuffer,
 			lo = 0,
 			hi = 1;
 		if (mode === 1) {
-			channel = ws.channelBuffers[ws.channels.indexOf(colorBy)] as GPUBuffer;
-			let range = channelRange.get(colorBy);
+			channel = ws.channelBuffers[ws.channels.indexOf(marker)] as GPUBuffer;
+			let range = channelRange.get(marker);
 			if (!range) {
 				const all = await readback(device, channel, Float32Array);
+				if (!current()) return;
 				const stride = Math.max(1, Math.floor(all.length / 200000)),
 					values: number[] = [];
 				for (let index = 0; index < all.length; index += stride) {
@@ -238,7 +257,7 @@ async function main() {
 					values[Math.floor(values.length * 0.1)] ?? 0,
 					values[Math.floor(values.length * 0.9)] ?? 1,
 				];
-				channelRange.set(colorBy, range);
+				channelRange.set(marker, range);
 			}
 			[lo, hi] = range;
 		}
@@ -264,6 +283,7 @@ async function main() {
 				colors = upload(temporary.device, popColor),
 				ramp = upload(temporary.device, palette);
 			for (const batch of renderBatches(ws.n)) {
+				if (!current()) return;
 				const window = { start: batch.first, count: batch.count };
 				new Uint32Array(pb)[0] = batch.count;
 				device.queue.writeBuffer(params, 0, pb);
@@ -290,7 +310,7 @@ async function main() {
 				device.queue.submit([encoder.finish()]);
 				await device.queue.onSubmittedWorkDone();
 			}
-			await renderer.draw();
+			if (current()) await renderer.draw(!gate.busy);
 			await device.queue.onSubmittedWorkDone();
 		} finally {
 			await device.queue.onSubmittedWorkDone().catch(() => {});
@@ -298,10 +318,18 @@ async function main() {
 		}
 	}
 	function scheduleRecolor() {
-		if (!gate.busy && !deviceLost)
-			repaint = repaint.then(recolor).catch((error) => {
-				if (!deviceLost) showError(error);
-			});
+		if (!gate.busy && !deviceLost) {
+			const revision = ++colorRevision,
+				marker = colorBy;
+			repaint = repaint
+				.then(() => recolor(marker, revision))
+				.then(() => {
+					if (revision === colorRevision) demo?.onColorsChanged();
+				})
+				.catch((error) => {
+					if (!deviceLost) showError(error);
+				});
+		}
 	}
 	function buildLegend() {
 		if (!ws) return;
@@ -437,6 +465,8 @@ async function main() {
 			scopeOpen = false;
 		try {
 			const t0 = performance.now();
+			await demo?.dispose();
+			demo = null;
 			await repaint;
 			await renderer.pause();
 			clearMap();
@@ -620,13 +650,50 @@ async function main() {
 			$("data-summary").hidden = false;
 			$("sidebar").hidden = false;
 			$("loading-overlay").hidden = true;
+			demo = new DemoPanel(
+				device,
+				ws,
+				renderer,
+				colorBuf,
+				computeBinding,
+				cacheKey,
+				async (channel, signal) => {
+					signal?.throwIfAborted();
+					const previous = colorBy,
+						revision = ++colorRevision;
+					colorBy = channel;
+					$<HTMLSelectElement>("colour-by").value = channel;
+					const task = repaint
+						.catch(() => {})
+						.then(async () => {
+							await recolor(channel, revision, signal);
+							if (revision !== colorRevision)
+								throw new Error("Marker request superseded by a newer display change");
+							if (signal?.aborted) {
+								colorBy = previous;
+								$<HTMLSelectElement>("colour-by").value = previous;
+								await recolor(previous, ++colorRevision);
+							}
+							demo?.onColorsChanged();
+							signal?.throwIfAborted();
+						});
+					repaint = task.catch(() => {});
+					await task;
+				},
+				async () => {
+					await cacheSaving;
+					await browserCache.retain(new Set());
+					location.reload();
+				},
+				demoAccessCode,
+			);
 			console.log(
 				`Ready: ${ws.n} events in ${(totalMs / 1000).toFixed(1)}s wall time (${cached ? "cached map" : "computed"})`,
 			);
 			if (!cached) {
 				const readyWorkspace = ws;
 				lastStage = "saving the map cache";
-				void saveWorkspaceCache(
+				cacheSaving = saveWorkspaceCache(
 					browserCache,
 					cacheKey,
 					publication,

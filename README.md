@@ -30,7 +30,9 @@ Requires a WebGPU browser (Chrome/Edge 113+). `?oracle=N` loads the first N orac
 For agent-driven native analysis, use the local studio workflow in
 `packages/host/README.md`. Build, served-version acceptance and rollback are
 documented in `docs/DELIVERY.md`.
-Public static-demo hosting is documented in [`docs/PUBLIC_DEMO.md`](docs/PUBLIC_DEMO.md).
+Public demo hosting is documented in [`docs/PUBLIC_DEMO.md`](docs/PUBLIC_DEMO.md).
+The lasso → violin plots → named populations → live agent/dictation walkthrough is in
+[`docs/INTERACTIVE_DEMO.md`](docs/INTERACTIVE_DEMO.md).
 
 ## Packages
 

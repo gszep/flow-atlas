@@ -255,9 +255,13 @@ describe("prepare staging and verification", () => {
 		assert.equal(outcome.code, 0, outcome.stderr);
 		const staged = await readdir(destination);
 		assert.deepEqual(staged.sort(), [
+			"demo-api.mjs",
+			"demo-tools.mjs",
+			"package-lock.json",
 			"package.json",
 			"public",
 			"release.json",
+			"speech-relay.mjs",
 			"static-server.mjs",
 		]);
 		const release = JSON.parse(await readFile(join(destination, "release.json"), "utf8"));
@@ -271,10 +275,14 @@ describe("prepare staging and verification", () => {
 		assert.equal(typeof release.source.dirty, "boolean");
 		const manifestPaths = release.assets.map((asset) => asset.path).sort();
 		assert.deepEqual(manifestPaths, [
+			"demo-api.mjs",
+			"demo-tools.mjs",
+			"package-lock.json",
 			"package.json",
 			"public/assets/app-abc12345.js",
 			"public/assets/logo-a1b2c3d4.svg",
 			"public/index.html",
+			"speech-relay.mjs",
 			"static-server.mjs",
 		]);
 		for (const asset of release.assets) {

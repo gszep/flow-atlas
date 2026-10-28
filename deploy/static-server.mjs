@@ -1,9 +1,10 @@
 /**
- * Flow Atlas public demo static server. Zero external dependencies, Node 24.
+ * Flow Atlas public demo server, Node 24. Static assets plus a bounded demo API.
  *
  * Serves only the staged public UI assets next to this file (`public/`) plus the
  * staged `release.json`. Strict GET/HEAD, single-decode path confinement, no
- * traversal, dotfiles, symlinks, listings or dynamic endpoints. Plain error
+ * traversal, dotfiles, symlinks or listings. Authenticated /api/demo routes are
+ * separate from static routing and never expose the local host studio. Plain error
  * bodies never echo paths. WebGPU needs no special headers, so none that could
  * break it are set.
  */
@@ -14,6 +15,7 @@ import { createServer } from "node:http";
 import { dirname, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { createDemoApi } from "./demo-api.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -314,6 +316,7 @@ export async function createStaticServer(options = {}) {
 	// never share listed payloads.
 	const publicationFiles = await loadPublicationFiles(publicRoot, await realPublicRoot);
 	const log = options.log === undefined ? (line) => console.log(line) : options.log;
+	const demo = createDemoApi(options.demo ?? {});
 	const server = createServer(async (request, response) => {
 		const started = Date.now();
 		const headOnly = request.method === "HEAD";
@@ -323,6 +326,7 @@ export async function createStaticServer(options = {}) {
 			log(`${request.method} ${truncateUrl(request.url)} -> ${status} ${Date.now() - started}ms`);
 		};
 		try {
+			if (await demo(request, response)) return;
 			if (request.method !== "GET" && request.method !== "HEAD") {
 				plain(response, 405, "Method not allowed", headOnly, { allow: "GET, HEAD" });
 				finish(405);
@@ -417,6 +421,12 @@ export async function createStaticServer(options = {}) {
 			log(`static server error: ${error instanceof Error ? error.message : "unknown"}`);
 		}
 	});
+	server.on("close", () => demo.close());
+	server.on("shutdown", () => demo.close());
+	if (demo.speechEnabled) {
+		const { attachSpeechRelay } = await import("./speech-relay.mjs");
+		attachSpeechRelay(server, demo, options.demo ?? {});
+	}
 	return server;
 }
 
@@ -464,6 +474,7 @@ export async function main() {
 	);
 	const stopped = new Promise((done) => {
 		const close = () => {
+			server.emit("shutdown");
 			server.close(() => done());
 		};
 		process.on("SIGTERM", close);
