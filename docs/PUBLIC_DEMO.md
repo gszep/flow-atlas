@@ -5,6 +5,7 @@ It serves the browser prototype and the user-authorized publication companion da
 The public entry automatically downloads the companion, shows a centered loading
 bar, trains on up to 100,000 events and projects the complete dataset with minimal controls.
 This is separate from the local agent studio described in `DELIVERY.md`.
+The interactive population/dictation demo is described in `INTERACTIVE_DEMO.md`.
 
 ## Publication boundary
 
@@ -16,7 +17,7 @@ This is separate from the local agent studio described in `DELIVERY.md`.
   experiments, tokens or the host's RPC/MCP service. The public UI has no upload
   or dataset-selection surface; synthetic fixtures remain development tests only.
 - The existing browser pipeline is a visualization prototype, not a view of a
-  host analysis receipt. Its sampled companion view does not establish
+  host analysis receipt. Its full companion view does not establish
   FlowJo fidelity, biological accuracy or collective-review effectiveness.
 - Planned review/community capabilities remain in the roadmap rather than public
   sidebar prose. WebGPU is required; no CPU fallback is added.
@@ -35,7 +36,8 @@ Use the existing Sites Cloud Run / Cloud DNS route, as requested by the user:
 | DNS zone | `gszep-com` |
 | DNS record | `flow.gszep.com. CNAME ghs.googlehosted.com.` |
 
-The runtime identity has no project roles. The build identity uses the standard
+The runtime identity has no project roles; it has secret-level read access only
+to this demo's model, speech and application-access secrets. The build identity uses the standard
 `roles/run.builder` role for source deployment. No keys are created or downloaded.
 Deploy with no minimum instances, at most one instance, one CPU and 256 MiB memory.
 The public static service uses the invoker-IAM-check setting, following the existing
@@ -46,7 +48,7 @@ Account/configuration bindings remain in private operator configuration.
 
 ```sh
 pnpm --filter @flow-atlas/ui build
-node --test --test-concurrency=1 deploy/static-server.test.mjs
+node --test --test-concurrency=1 deploy/*.test.mjs
 node deploy/prepare.mjs "$PACKAGE_DIR" --revision "$(git rev-parse HEAD)" \
   --publication-root "$PUBLICATION_ROOT"
 ```
@@ -54,8 +56,9 @@ node deploy/prepare.mjs "$PACKAGE_DIR" --revision "$(git rev-parse HEAD)" \
 `PACKAGE_DIR` must be an invocation-owned empty destination outside the checkout.
 The staging command does not rebuild by default. It verifies the file set, byte
 sizes and hashes and emits `release.json`; deploy only a clean, reviewed source
-revision. The staged package starts with `npm start` and contains no external
-runtime dependencies. The Cloud Run source build uses its Node 24 buildpack.
+revision. The staged package starts with `npm start` after `npm ci`; its only external
+runtime dependency is the pinned `ws` package for the authenticated speech relay.
+The Cloud Run source build uses its Node 24 buildpack.
 
 The publication variant additionally stages the exact manifest-listed files from
 an explicitly supplied source directory. Per-file hashes and sizes must match;

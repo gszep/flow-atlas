@@ -34,6 +34,7 @@ type Metadata = Pick<
 	| "sourceEventCount"
 	| "sampling"
 	| "channels"
+	| "originalChannelNames"
 	| "channelPresent"
 	| "embedChannels"
 	| "samples"
@@ -89,6 +90,13 @@ export function validCacheMetadata(
 ): value is Metadata {
 	if (!value || typeof value !== "object") return false;
 	const m = value as Metadata;
+	if (
+		m.originalChannelNames !== undefined &&
+		(!Array.isArray(m.originalChannelNames) ||
+			m.originalChannelNames.length !== m.channels?.length ||
+			!m.originalChannelNames.every(strings))
+	)
+		return false;
 	if (
 		m.n !== manifest.eventCount ||
 		m.sourceEventCount !== m.n ||
@@ -246,6 +254,9 @@ export async function saveWorkspaceCache(
 		sourceEventCount: workspace.sourceEventCount,
 		sampling: workspace.sampling,
 		channels: workspace.channels,
+		...(workspace.originalChannelNames
+			? { originalChannelNames: workspace.originalChannelNames }
+			: {}),
 		channelPresent: workspace.channelPresent,
 		embedChannels: workspace.embedChannels,
 		samples: workspace.samples,

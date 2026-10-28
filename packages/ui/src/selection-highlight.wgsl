@@ -1,0 +1,12 @@
+struct Params { count: u32, selectedColor: u32, _p1: u32, _p2: u32 };
+@group(0) @binding(0) var<uniform> p: Params;
+@group(0) @binding(1) var<storage, read> mask: array<u32>;
+@group(0) @binding(2) var<storage, read> source: array<u32>;
+@group(0) @binding(3) var<storage, read_write> outputColors: array<u32>;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= p.count) { return; }
+  // RGBA8 selection / dim neutral context; retain original visibility and alpha.
+  outputColors[i] = (source[i] & 0xff000000u) | select(0x00383838u, p.selectedColor, mask[i] != 0u);
+}

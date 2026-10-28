@@ -1724,3 +1724,70 @@ draws, no late refinement frames and no backing-resolution change during motion.
 The tested animation-frame cadence was about 33 ms, not a 60/120-fps or actual
 phone benchmark. Initial loading protection is retained, but actual-phone live
 rendering still needs user acceptance. No Artemis GPU work was used.
+
+## 2026-10-29 — Human and agent population exploration demo
+
+**User-authorized scope:** lasso a population, immediately inspect channel violins,
+name it, ask an in-page typed/dictated agent to create or propose other selections,
+inspect those live, then reset for the next demo. The same tools must be usable
+over MCP against the connected browser. Preserve the fast all-event point view.
+
+Selections are exploratory embedding/display-space definitions, not raw-channel
+gates or edits to human-finalized scientific workspaces. Membership, counts,
+finite extrema and 128-bin histograms run on WebGPU over all events. Violin
+rendering uses those histograms; median values are explicitly approximate.
+Original channel identifiers accompany the existing display marker names. Missing
+values remain missing. Human/accepted populations cannot be changed by agent
+mutations; refinements create separately attributed candidates. Reference-based
+candidates are identified as imported annotations, not de novo discoveries.
+
+Use the existing Claude Cloudflare Worker from the trusted backend, with fixed
+tools/model and in-memory, bounded application sessions. Live tests verified
+`claude-haiku-5-5`. An initial tool request exposed upstream `caller: direct`
+metadata and optional thinking blocks; the adapter now explicitly disables thinking
+and normalizes only direct caller metadata. It does not execute malformed, partial,
+unknown or refused tool responses. Model and speech credentials stay in app-scoped
+Secret Manager bindings readable only by the runtime identity at the secret level.
+Private launch fragments carry only the separate application access code, which is
+removed from the URL and never persisted in browser storage.
+
+The narrow demo MCP bridge does not publish the local host studio. Session-scoped
+commands are delivered once to the browser, have deadlines and active-lease checks,
+and guard mutation commits after asynchronous analysis. Reset/reconnect/stop abort
+old command epochs; expected revisions prevent stale population writes. Reviews
+identified and corrected reconnect, cancellation, reset and marker-recolour races.
+Session connection/revocation has an application deadline; an unconfirmed remote
+revocation does not prevent local reset. Marker updates serialize with reset and
+discard stale GPU work. Demo state is temporary; raw-data/embedding cache is separate.
+
+**Speech owner handoff:** Kotoleaf supplied its deployed `/v1/listen` protocol and
+the user-directed shared dictation token via a private file binding. FlowAtlas uses
+a same-origin WebSocket relay, avoiding a long-lived browser credential or changes
+to the Worker's CORS/auth path. The relay always sets `store=false` and
+`mip_opt_out=true`; this disables Kotoleaf storage for these streams without claiming
+absence of Deepgram processing. Per-IP/session admission, concurrent-stream,
+duration, audio-byte and queue limits and a dictation off switch live in FlowAtlas,
+so they do not throttle other apps using the shared Worker. The pinned `ws` runtime
+dependency is confined to the deployment package; core numerical packages stay
+dependency-free. API and relay tests are included in the CI deployment-test job.
+
+**Measured integration evidence before final release acceptance:** the full
+3,885,530-event dataset loaded from its computed cache in 2.25 s; a 987,696-event
+lasso produced twenty distributions in 2.61 s. A real Claude tool workflow created
+a candidate and compared features in 11.16 s; real HTTP MCP calls observed the same
+browser state, and Reset revoked the session (401 afterward). Synthetic EN/JA speech
+through actual browser MediaStream/AudioWorklet and the live Kotoleaf relay produced
+first text after 1.22 s, with no automatic model submission. Stop/reset closed its
+tracks and connection. Recognition had small transcription errors, so editing before
+submission remains explicit. Physical-microphone, actual-phone and long-session
+speech quality are not established by that synthetic check. No Artemis GPU work
+was used. The planned coordinate-first/Zarr migration remains separate from this
+interaction demo; no new lazy-array implementation is claimed here.
+
+Final integration also caught a browser-only unbound `fetch` receiver in the MCP
+poller; binding the native function and adding a receiver regression test restored
+the live bridge. The final repeated lasso/agent/MCP/reset check passed, as did a
+real-browser test that deliberately held a marker readback across Reset and
+verified exact restoration of label colors. All 612 repository tests and 38
+deployment/relay/MCP tests passed locally. Earlier failed receipts remain retained;
+synthetic audio success is not relabelled as physical-microphone acceptance.
