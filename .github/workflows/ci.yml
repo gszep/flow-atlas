@@ -3,9 +3,13 @@ on:
   push:
     branches: [main]
   pull_request:
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -32,7 +36,19 @@ jobs:
           FLOW_ATLAS_GPU: software
           LP_NUM_THREADS: '1'
           NODE_OPTIONS: --max-old-space-size=2048
-      - run: pnpm test --maxWorkers=2
+      - name: Test suite with bounded native-worker lifetime
+        timeout-minutes: 5
+        run: |
+          started=$(date +%s)
+          set +e
+          timeout --verbose --signal=TERM --kill-after=10s 240s pnpm test --maxWorkers=2
+          result=$?
+          set -e
+          echo "Test process elapsed: $(($(date +%s) - started))s; exit: $result"
+          if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
+            echo "::error::Test runner/native worker exceeded 240 seconds. This is a failed check, not a passing assertion summary."
+          fi
+          exit "$result"
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
           # Bound nested software-renderer threads as well as Vitest workers.

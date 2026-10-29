@@ -1855,3 +1855,14 @@ unions, combined intersections, source-colour preservation and a selected point
 under 65,536 later grey points. Normal navigation still renders resident points,
 not cached images. This changes exploratory display/selection behavior, not raw
 scientific gates or biological validation.
+
+## 2026-10-29 — Bound CI worker hangs
+
+The merged application run passed, while the identical PR run stopped producing
+test output at 09:04:56 UTC and remained alive until cancellation at 09:32:34.
+The exact native-worker cause is not established. Add a process-group timeout to
+the unchanged full test command: TERM after 240 seconds, KILL after ten more,
+with nonzero failure propagation and elapsed-time reporting. A five-minute step
+and ten-minute job bound cover runner/setup stalls; superseded runs on the same
+ref cancel. No tests, assertions or coverage are removed. This bounds the failure
+and preserves diagnostics; it is not a claim to have repaired the native library.
