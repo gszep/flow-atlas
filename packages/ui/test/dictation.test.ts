@@ -119,12 +119,12 @@ describe("Dictation relay lifecycle", () => {
 		if (!worklet) throw new Error("No worklet");
 		return { socket, worklet };
 	}
-	it("requires auth without requesting a microphone or ticket", async () => {
+	it("waits for a demo session without requesting a microphone or ticket", async () => {
 		client = new Dictation({ getToken: () => null, onText: text, onState: state });
 		await client.start();
 		expect(permission).not.toHaveBeenCalled();
 		expect(fetcher).not.toHaveBeenCalled();
-		expect(state).toHaveBeenCalledWith("error", expect.stringContaining("Sign in"));
+		expect(state).toHaveBeenCalledWith("error", expect.stringContaining("not connected"));
 	});
 	it("disposes a late permission grant after cancel with no late callbacks", async () => {
 		const late = deferred<MediaStream>();

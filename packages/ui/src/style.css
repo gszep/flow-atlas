@@ -210,6 +210,13 @@ canvas {
 .activity-error {
 	color: #ff9485;
 }
+#demo-activity pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 180px;
+	overflow: auto;
+	font-size: 11px;
+}
 #selection-overlay {
 	position: absolute;
 	inset: 0;

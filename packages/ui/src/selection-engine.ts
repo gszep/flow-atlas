@@ -6,13 +6,37 @@ import type { LoadedWorkspace } from "./workspace.js";
 
 export type Point = { x: number; y: number };
 /** Exploratory selections in embedding/display space, never persisted raw-channel gates. */
-export type SelectionSpec =
+export type LeafSelectionSpec =
+	| { kind: "all" }
 	| { kind: "polygon"; points: Point[] }
 	| { kind: "reference"; population: number }
 	| { kind: "ranges"; ranges: Array<{ channel: number; min: number | null; max: number | null }> };
+export type SelectionSpec =
+	| LeafSelectionSpec
+	| { kind: "intersection"; selections: LeafSelectionSpec[] };
+export function intersectSelections(...specs: SelectionSpec[]): SelectionSpec {
+	const selections = specs.flatMap((spec) =>
+		spec.kind === "intersection" ? spec.selections : [spec],
+	);
+	if (
+		selections.length < 1 ||
+		selections.length > 8 ||
+		selections.reduce(
+			(count, spec) => count + (spec.kind === "ranges" ? spec.ranges.length : 1),
+			0,
+		) > 16
+	)
+		throw new Error("Selection intersection exceeds the supported predicate limit");
+	return structuredClone(
+		selections.length === 1
+			? (selections[0] as LeafSelectionSpec)
+			: { kind: "intersection" as const, selections },
+	);
+}
 export interface SelectionAnalysis {
 	count: number;
 	total: number;
+	bounds?: { minX: number; maxX: number; minY: number; maxY: number } | null;
 	channels: Array<{
 		index: number;
 		name: string;
@@ -40,7 +64,18 @@ const abort = (signal?: AbortSignal) => signal?.throwIfAborted();
 
 /** Validate metadata only. Membership is evaluated exclusively on the GPU using stored F32 values. */
 export function validateSelectionSpec(spec: SelectionSpec, channels: number, populations: number) {
-	if (spec.kind === "polygon") {
+	if (spec.kind === "intersection") {
+		if (
+			!Array.isArray(spec.selections) ||
+			spec.selections.length < 2 ||
+			spec.selections.length > 8 ||
+			spec.selections.some((part) => !["all", "polygon", "reference", "ranges"].includes(part.kind))
+		)
+			throw new Error("Intersection requires 2–8 leaf selections");
+		for (const part of spec.selections) validateSelectionSpec(part, channels, populations);
+		intersectSelections(spec);
+	} else if (spec.kind === "all") return;
+	else if (spec.kind === "polygon") {
 		if (
 			spec.points.length < 3 ||
 			spec.points.length > 128 ||
@@ -148,6 +183,7 @@ export class SelectionEngine {
 		bindings: Binding[],
 		count: number,
 		signal?: AbortSignal,
+		drain = true,
 	) {
 		abort(signal);
 		this.device.queue.writeBuffer(uniform, 0, data.buffer, data.byteOffset, data.byteLength);
@@ -176,7 +212,7 @@ export class SelectionEngine {
 		pass.dispatchWorkgroups(Math.ceil(count / 256));
 		pass.end();
 		this.device.queue.submit([encoder.finish()]);
-		await this.device.queue.onSubmittedWorkDone();
+		if (drain) await this.device.queue.onSubmittedWorkDone();
 		abort(signal);
 	}
 
@@ -198,7 +234,8 @@ export class SelectionEngine {
 	): Promise<T> {
 		abort(signal);
 		validateSelectionSpec(spec, this.workspace.channels.length, this.workspace.populations.length);
-		if (spec.kind === "polygon" && !this.workspace.embedding)
+		const selections = spec.kind === "intersection" ? spec.selections : [spec];
+		if (selections.some((part) => part.kind === "polygon") && !this.workspace.embedding)
 			throw new Error("Embedding is unavailable");
 		const owned: GPUBuffer[] = [];
 		const own = (size: number) => {
@@ -212,42 +249,56 @@ export class SelectionEngine {
 				dummy = own(8),
 				polygon = own(1024);
 			const uniform = this.device.createBuffer({
-				size: 48,
+				size: 64,
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 			});
 			owned.push(uniform);
-			if (spec.kind === "polygon")
-				this.device.queue.writeBuffer(
-					polygon,
-					0,
-					new Float32Array(spec.points.flatMap(({ x, y }) => [x, y])),
-				);
-			const ranges = spec.kind === "ranges" ? spec.ranges : [null];
-			for (const [index, range] of ranges.entries()) {
+			const passes = selections.flatMap((selection) =>
+				(selection.kind === "ranges" ? selection.ranges : [null]).map((range) => ({
+					selection,
+					range,
+				})),
+			);
+			for (const [index, { selection: part, range }] of passes.entries()) {
+				let bounds = [0, 0, 0, 0];
+				if (part.kind === "polygon") {
+					const points = new Float32Array(part.points.flatMap(({ x, y }) => [x, y]));
+					const xs = points.filter((_, i) => i % 2 === 0),
+						ys = points.filter((_, i) => i % 2 === 1);
+					bounds = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+					this.device.queue.writeBuffer(polygon, 0, points);
+				}
 				for (const chunk of this.chunks) {
-					const data = new Uint32Array(12),
+					const data = new Uint32Array(16),
 						floats = new Float32Array(data.buffer);
 					data.set([
 						chunk.count,
 						this.workspace.words,
-						spec.kind === "reference" ? spec.population : 0,
-						spec.kind === "polygon" ? spec.points.length : 0,
-						spec.kind === "polygon" ? 0 : spec.kind === "reference" ? 1 : 2,
+						part.kind === "reference" ? part.population : 0,
+						part.kind === "polygon" ? part.points.length : 0,
+						part.kind === "polygon"
+							? 0
+							: part.kind === "reference"
+								? 1
+								: part.kind === "ranges"
+									? 2
+									: 3,
 						index > 0 ? 1 : 0,
-						index === ranges.length - 1 ? 1 : 0,
+						index === passes.length - 1 ? 1 : 0,
 						(range?.min != null ? 1 : 0) | (range?.max != null ? 2 : 0),
 					]);
 					floats[8] = range?.min ?? 0;
 					floats[9] = range?.max ?? 0;
+					floats.set(bounds, 10);
 					await this.dispatch(
 						this.membership,
 						uniform,
 						data,
 						[
-							spec.kind === "polygon"
+							part.kind === "polygon"
 								? this.window(this.workspace.embedding as GPUBuffer, chunk, 8)
 								: { buffer: dummy, size: 8 },
-							spec.kind === "reference"
+							part.kind === "reference"
 								? this.window(this.workspace.labels, chunk, this.workspace.words * 4)
 								: { buffer: dummy, size: 4 },
 							range
@@ -289,7 +340,7 @@ export class SelectionEngine {
 					this.device.queue.writeBuffer(summary, 0, initial);
 					if (count > 0)
 						for (const histogram of [0, 1])
-							for (const chunk of this.chunks) {
+							for (const [chunkIndex, chunk] of this.chunks.entries()) {
 								await this.dispatch(
 									this.distribution,
 									uniform,
@@ -301,6 +352,7 @@ export class SelectionEngine {
 									],
 									chunk.count,
 									options.signal,
+									(chunkIndex + 1) % 8 === 0 || chunkIndex === this.chunks.length - 1,
 								);
 							}
 					const values = await readback(this.device, summary, Uint32Array, SUMMARY_BYTES);
@@ -334,8 +386,37 @@ export class SelectionEngine {
 						approximateMedian: true,
 					});
 				}
+				let bounds: SelectionAnalysis["bounds"] = null;
+				if (count && this.workspace.embedding) {
+					const axes: Array<[number, number] | null> = [];
+					for (const axis of [0, 1]) {
+						this.device.queue.writeBuffer(summary, 0, new Uint32Array([0xffffffff, 0, 0]));
+						for (const [i, chunk] of this.chunks.entries())
+							await this.dispatch(
+								this.distribution,
+								uniform,
+								new Uint32Array([chunk.count, 0, 2, axis]),
+								[
+									this.window(this.workspace.embedding, chunk, 8),
+									this.window(mask, chunk),
+									{ buffer: summary, size: SUMMARY_BYTES },
+								],
+								chunk.count,
+								options.signal,
+								(i + 1) % 8 === 0 || i === this.chunks.length - 1,
+							);
+						const result = await readback(this.device, summary, Uint32Array, 12);
+						axes.push(
+							result[2]
+								? [decodeOrdered(result[0] as number), decodeOrdered(result[1] as number)]
+								: null,
+						);
+					}
+					if (axes[0] && axes[1])
+						bounds = { minX: axes[0][0], maxX: axes[0][1], minY: axes[1][0], maxY: axes[1][1] };
+				}
 				abort(options.signal);
-				return { count, total: this.workspace.n, channels };
+				return { count, total: this.workspace.n, channels, bounds };
 			}),
 		);
 	}

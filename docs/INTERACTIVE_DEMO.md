@@ -5,9 +5,8 @@
 1. Open the publication map. Existing full-data caching and live point navigation remain.
 2. Choose **Lasso**, draw a region, and inspect the twenty channel distributions.
 3. Name the selection and save it. Original channel identifiers appear alongside marker names.
-4. Connect the in-page agent with the application demo access code, or open a private
-   launch link with `#demo=<application-code>`. The fragment is removed immediately;
-   the code is not a Claude or Deepgram credential and is never persisted in browser storage.
+4. The in-page agent connects automatically with a bounded guest session. No access
+   code, private launch link or model-provider login is required.
 5. Type or dictate a request. Dictation is editable and is never automatically submitted.
    Ask the agent to compare populations, create candidates or propose a refinement.
 6. Inspect the real tool activity and the new population cards. Hover/click to highlight
@@ -53,6 +52,14 @@ again after analysis. Results are not reported as complete when acknowledgment f
 Transport failure after a mutation can leave an uncertain outcome: inspect state before
 retrying, rather than automatically repeating a write.
 
+Every imported reference now has an inspectable `ref:<index>` identifier. Reference
+indices and exact unambiguous names also resolve. `inspect_population` can inspect
+`all` or compute overlap via `within=<population id>`; `create_population` uses that
+same `within` argument for actual GPU intersection membership. `refines` alone is
+provenance and permits an expanded correction. Selecting a population can frame
+its measured embedding bounds. Marker interpretation should compare measured
+profiles/overlaps, not infer purity or positivity from arbitrary transformed medians.
+
 Runtime configuration (secret values must come from the backend secret store):
 
 | Variable | Purpose |
@@ -60,7 +67,6 @@ Runtime configuration (secret values must come from the backend secret store):
 | `FLOW_CLAUDE_WORKER_URL` | Verified HTTPS origin, no path or query |
 | `FLOW_CLAUDE_WORKER_TOKEN` | Backend-only application credential |
 | `FLOW_CLAUDE_MODEL` | Full supported model ID; tested here with `claude-haiku-5-5` |
-| `FLOW_DEMO_ACCESS_CODE` | Separate application access code |
 | `FLOW_DEMO_ORIGIN` | Exact browser origin for Origin validation |
 | `FLOW_DEEPGRAM_WORKER_URL` | Verified Kotoleaf HTTPS origin |
 | `FLOW_DEEPGRAM_WORKER_TOKEN` | Current shared dictation credential, backend only |
@@ -68,8 +74,9 @@ Runtime configuration (secret values must come from the backend secret store):
 | `FLOW_TRUST_PROXY_HOPS` | `1` only behind the configured trusted platform proxy; otherwise use peer IP |
 
 One instance is required for the process-local session/command state. Sessions expire after
-one hour; there are at most sixteen. Model calls are capped at two concurrently and one per
-session, with a sixty-call session budget. Access codes and upstream credentials are not
+one hour; there are at most 64, with at most eight outstanding per visitor IP. Model calls
+are capped at two concurrently and one per session, with a sixty-call session budget and
+per-IP caps of twenty/minute and 120/hour. Upstream credentials are not
 logged. Origin checks, body limits, fixed upstream origins and typed tools remain required.
 
 ## EN/JA dictation

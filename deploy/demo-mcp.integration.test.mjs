@@ -31,7 +31,7 @@ test("official MCP client negotiates, lists and calls a browser-backed tool", as
 			await fetch(`${url}/api/demo/session`, {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ accessCode: "test-code" }),
+				body: "{}",
 			})
 		).json();
 		const headers = { authorization: `Bearer ${session.token}` };

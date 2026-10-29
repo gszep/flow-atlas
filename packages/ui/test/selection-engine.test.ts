@@ -2,6 +2,7 @@ import { afterAll, expect, it } from "vitest";
 import { createStorage, readback, upload } from "../../compute/src/buffers.js";
 import { getDevice, releaseDevice } from "../../compute/test/setup.js";
 import {
+	intersectSelections,
 	SelectionEngine,
 	type SelectionSpec,
 	validateSelectionSpec,
@@ -207,6 +208,30 @@ it("GPU selections cover bounded windows, nested label words, missing values, po
 			],
 		};
 		expect((await engine.analyze(polygon)).count).toBe(5);
+		const positive: SelectionSpec = { kind: "ranges", ranges: [{ channel: 0, min: 0, max: null }] };
+		const intersection = intersectSelections(polygon, reference, positive);
+		const subset = await engine.analyze(intersection);
+		expect(subset.count).toBe(1);
+		expect(subset.channels.map((c) => [c.min, c.max, c.finiteCount])).toEqual([
+			[4, 4, 1],
+			[60, 60, 1],
+		]);
+		expect(subset.bounds).toEqual({ minX: 0, maxX: 0, minY: 1, maxY: 1 });
+		expect((await engine.analyze(intersectSelections(positive, reference, polygon))).count).toBe(1);
+		expect(
+			(
+				await engine.analyze(
+					intersectSelections(reference, {
+						kind: "ranges",
+						ranges: [{ channel: 0, min: 100, max: null }],
+					}),
+				)
+			).count,
+		).toBe(0);
+		const all = await engine.analyze({ kind: "all" });
+		expect(all.count).toBe(n);
+		expect(all.bounds).toEqual({ minX: 0, maxX: 2, minY: 0, maxY: 2 });
+		expect(all.channels.map((c) => c.finiteCount)).toEqual([5, 5]);
 		expect((await bounded.analyze(polygon)).count).toBe(4);
 		await engine.highlight(reference, source, target);
 		expect(await readback(device, source, Uint32Array)).toEqual(colors);
