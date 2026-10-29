@@ -1791,3 +1791,44 @@ real-browser test that deliberately held a marker readback across Reset and
 verified exact restoration of label colors. All 612 repository tests and 38
 deployment/relay/MCP tests passed locally. Earlier failed receipts remain retained;
 synthetic audio success is not relabelled as physical-microphone acceptance.
+
+## 2026-10-29 — Repair reference inspection and remove the demo gate
+
+The user reported that the agent advertised imported CD8 references but failed
+to inspect them, then abandoned the requested segmentation. This was a contract
+defect: the catalogue supplied indices while inspection accepted only saved UUIDs.
+All references now expose stable `ref:<index>` IDs, accepted by inspection and
+selection alongside numeric indices. Lookup errors include machine-readable recovery
+IDs. The agent receives full bounded results; the activity UI shows summaries with
+optional data previews instead of large inline JSON dumps.
+
+`within` now computes real GPU intersections for inspection and creation, while
+`refines` remains provenance (a correction may expand its original). The virtual
+`all` population supplies a dataset baseline. GPU-derived selected-point bounds let
+the select tool actually frame populations. Prompt guidance requires measured
+comparisons/overlaps before claims about purity or marker positivity; an arbitrary
+display median or unimodality is not such evidence. Mutations stay revision-checked
+and human originals remain protected.
+
+At the user's explicit request, access-code admission is removed. The ordinary URL
+automatically establishes a guest session. Upstream credentials and bearer-session
+isolation remain server-side; visitor model limits, eight outstanding sessions/IP,
+64 sessions/instance, and the existing dictation limits bound public admission.
+Expired model sessions can renew once after an explicit 401 without repeating an
+executed tool request. MCP polling starts only when its connection is copied.
+
+Lasso performance changes retain all events: conservative polygon bounding-box
+rejection, workgroup-local histogram/extrema accumulation, and bounded batches of
+eight queue submissions between drains. Repeated inspection/creation reuses
+completed analysis results. Tests cover exact counts/histograms, nonfinite/tail
+lanes, intersections in different predicate orders, and navigation bounds.
+
+Measured browser replay of the reported CD8-shaped region inspected all four CD8
+references without errors, created two nonempty within-lasso candidates, preserved
+the original and navigated to the EMRA proposal. This replay contained 55,935 cells;
+54,830 overlapped the imported EMRA reference and 28 the Naive reference. These are
+annotation overlaps, not biological validation of the user's original selection.
+Release-to-violin time in separate old/new replay checks was approximately 0.97 s
+and 0.54 s on Calcifer. Drawing time was measured separately; cached embeddings/UI
+replays differed by three selected cells, so this is a local responsiveness
+comparison, not an exact cross-device benchmark. No Artemis GPU work was used.

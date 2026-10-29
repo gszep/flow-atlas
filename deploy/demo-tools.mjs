@@ -2,6 +2,8 @@
 const string = { type: "string", minLength: 1, maxLength: 160 };
 const revision = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const channel = { type: "integer", minimum: 0, maximum: 255 };
+const populationId = { oneOf: [string, { type: "integer", minimum: 0, maximum: 65535 }] };
+const optionalPopulationId = { oneOf: [...populationId.oneOf, { type: "null" }] };
 const object = (properties, required = Object.keys(properties)) => ({
 	type: "object",
 	properties,
@@ -11,11 +13,22 @@ const object = (properties, required = Object.keys(properties)) => ({
 const tool = (name, description, input_schema) => ({ name, description, input_schema });
 export const DEMO_TOOLS = [
 	tool("inspect_dataset", "Inspect aggregate demo dataset metadata, not raw events.", object({})),
-	tool("list_populations", "List original and agent-created populations.", object({})),
-	tool("inspect_population", "Inspect aggregate population statistics.", object({ id: string })),
+	tool(
+		"list_populations",
+		"List saved populations and imported references, with directly inspectable ids. Use ref:<index> for references and all for the dataset baseline.",
+		object({}),
+	),
+	tool(
+		"inspect_population",
+		"Inspect marker distributions for a named population, an imported reference (id e.g. ref:18, or its integer index), or all for the dataset baseline. Optional within computes the actual intersection with that population and reports overlap counts. Use returned ids; reference inspection does not create populations.",
+		object(
+			{ id: populationId, within: optionalPopulationId, includeGeometry: { type: "boolean" } },
+			["id"],
+		),
+	),
 	tool(
 		"create_population",
-		"Create an agent-owned population. Preserve original human populations; coordinates are display-transformed demo coordinates, not biological truth.",
+		"Create an agent-owned candidate. For a subset of a lasso, pass within=<lasso id>: membership is the intersection, not the whole reference. refines only records a proposed correction and can expand the original. Reference sources use the reference index from list_populations. Preserve human originals; no raw-event access is needed for these tools.",
 		object(
 			{
 				expectedRevision: revision,
@@ -51,7 +64,8 @@ export const DEMO_TOOLS = [
 					],
 				},
 				rationale: { type: "string", maxLength: 2000 },
-				refines: string,
+				refines: { ...string, type: ["string", "null"] },
+				within: optionalPopulationId,
 			},
 			["expectedRevision", "name", "source"],
 		),
@@ -66,7 +80,11 @@ export const DEMO_TOOLS = [
 		"Delete only an agent-owned population at the expected revision; never delete human originals.",
 		object({ expectedRevision: revision, id: string }),
 	),
-	tool("select_population", "Select a population in the demo view.", object({ id: string })),
+	tool(
+		"select_population",
+		"Highlight, inspect and zoom to a named population, imported ref:<index> reference, or all. Set focus=false to preserve the current camera. This changes the view, not membership.",
+		object({ id: populationId, focus: { type: "boolean" } }, ["id"]),
+	),
 	tool("set_marker", "Choose a marker channel for the demo view.", object({ channel: string })),
 ];
 
@@ -77,6 +95,8 @@ function matches(value, schema) {
 	if (Array.isArray(schema.type))
 		return schema.type.some((type) => matches(value, { ...schema, type }));
 	switch (schema.type) {
+		case "boolean":
+			return typeof value === "boolean";
 		case "null":
 			return value === null;
 		case "string":

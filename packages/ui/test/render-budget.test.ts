@@ -28,6 +28,20 @@ it("caps phone pixel density and honors texture limits without sampling events",
 	expect(Math.max(large.width, large.height)).toBeLessThanOrEqual(2048);
 });
 
+it("frames selected population bounds using the live camera, without changing dataset bounds", async () => {
+	const f = rendererFixture(),
+		renderer = new PointRenderer(f.device, f.canvas);
+	const bounds = { minX: 0, maxX: 20, minY: 0, maxY: 20 };
+	renderer.setData({} as GPUBuffer, {} as GPUBuffer, 1, bounds);
+	await renderer.draw();
+	await renderer.focus({ minX: 1, maxX: 3, minY: 2, maxY: 4 });
+	const center = renderer.dataToScreen({ x: 2, y: 3 });
+	expect(center.x).toBeCloseTo(f.canvas.clientWidth / 2);
+	expect(center.y).toBeCloseTo(f.canvas.clientHeight / 2);
+	expect(renderer.zoom).toBeGreaterThan(1);
+	expect(renderer.bounds).toEqual(bounds);
+});
+
 function rendererFixture() {
 	vi.stubGlobal("GPUTextureUsage", {
 		RENDER_ATTACHMENT: 16,

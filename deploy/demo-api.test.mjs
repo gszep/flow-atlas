@@ -54,8 +54,8 @@ async function fixture(t, options = {}) {
 			body: raw ?? (json === undefined ? undefined : JSON.stringify(json)),
 		});
 	}
-	async function session() {
-		const r = await request("/api/demo/session", { json: { accessCode: "demo-code" } });
+	async function session(headers = {}) {
+		const r = await request("/api/demo/session", { json: {}, headers });
 		assert.equal(r.status, 200);
 		return (await r.json()).token;
 	}
@@ -70,6 +70,23 @@ async function fixture(t, options = {}) {
 	};
 }
 const messages = [{ role: "user", content: "Inspect the demo" }];
+test("reference inspection, overlap and navigation accept the advertised identifiers", () => {
+	for (const id of ["ref:18", "ref:19", "ref:20", "ref:21", 18, 19, 20, 21, "all"]) {
+		assert.equal(validToolInput("inspect_population", { id }), true);
+		assert.equal(validToolInput("inspect_population", { id, within: "human-id" }), true);
+		assert.equal(validToolInput("select_population", { id, focus: true }), true);
+	}
+	assert.equal(
+		validToolInput("create_population", {
+			expectedRevision: 1,
+			name: "EMRA subset",
+			source: { kind: "reference", population: 20 },
+			within: "human-id",
+			refines: "human-id",
+		}),
+		true,
+	);
+});
 
 test("speech tickets expire, bind their visitor, are one-use and enforce one stream per session", async (t) => {
 	const f = await fixture(t, {
@@ -132,7 +149,7 @@ test("config is secret-free; missing and malformed configuration fails closed", 
 		model: "claude-haiku-5-5",
 	});
 	for (const override of [
-		{ FLOW_DEMO_ACCESS_CODE: "" },
+		{ FLOW_CLAUDE_WORKER_TOKEN: "" },
 		{ FLOW_CLAUDE_WORKER_URL: "http://private.example" },
 		{ FLOW_CLAUDE_WORKER_URL: "https://user:pass@private.example" },
 		{ FLOW_CLAUDE_WORKER_URL: "https://private.example/path" },
@@ -149,10 +166,7 @@ test("config is secret-free; missing and malformed configuration fails closed", 
 test("auth, origin, content type, malformed JSON and bounded session lifetime", async (t) => {
 	const f = await fixture(t);
 	assert.equal((await agent(f)).status, 401);
-	assert.equal(
-		(await f.request("/api/demo/session", { json: { accessCode: "wrong" } })).status,
-		401,
-	);
+	assert.equal((await f.request("/api/demo/session", { json: {} })).status, 200);
 	assert.equal(
 		(
 			await f.request("/api/demo/session", {
@@ -180,11 +194,11 @@ test("auth, origin, content type, malformed JSON and bounded session lifetime", 
 	assert.equal((await f.request("/other")).status, 404);
 });
 test("session cap, revocation and shutdown", async (t) => {
-	const f = await fixture(t);
+	const f = await fixture(t, { env: { ...env, FLOW_TRUST_PROXY_HOPS: "1" } });
 	const tokens = [];
-	for (let i = 0; i < 16; i++) {
+	for (let i = 0; i < 64; i++) {
 		f.advance(6001);
-		tokens.push(await f.session());
+		tokens.push(await f.session({ "x-forwarded-for": `203.0.113.${i + 1}` }));
 	}
 	assert.equal(
 		(await f.request("/api/demo/session", { json: { accessCode: "demo-code" } })).status,
@@ -198,6 +212,13 @@ test("session cap, revocation and shutdown", async (t) => {
 	await f.session();
 	f.handler.close();
 	assert.equal((await f.request("/api/demo/config")).status, 503);
+});
+test("one visitor cannot occupy the global guest session pool", async (t) => {
+	const f = await fixture(t);
+	for (let i = 0; i < 8; i++) await f.session();
+	const r = await f.request("/api/demo/session", { json: {} });
+	assert.equal(r.status, 429);
+	assert.equal((await r.json()).error, "visitor_session_limit");
 });
 test("fixed provider subset, strict tool inputs and bounded history", async (t) => {
 	const f = await fixture(t);
@@ -324,10 +345,21 @@ test("session request budget is bounded at sixty", async (t) => {
 	const token = await f.session();
 	for (let i = 0; i < 60; i++) {
 		assert.equal((await agent(f, token)).status, 200);
-		f.advance();
+		f.advance(3001);
 	}
 	assert.equal((await agent(f, token)).status, 429);
 	assert.equal(f.calls.length, 60);
+});
+test("anonymous sessions do not bypass the shared visitor model budget", async (t) => {
+	const f = await fixture(t, { env: { ...env, FLOW_DEMO_ACCESS_CODE: undefined } }),
+		a = await f.session(),
+		b = await f.session();
+	for (let i = 0; i < 20; i++) {
+		assert.equal((await agent(f, i % 2 ? a : b)).status, 200);
+		f.advance(201);
+	}
+	assert.equal((await agent(f, a)).status, 429);
+	assert.equal(f.calls.length, 20);
 });
 test("MCP discovery, isolated commands delivered once, results and revocation", async (t) => {
 	const f = await fixture(t);

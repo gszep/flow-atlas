@@ -149,7 +149,7 @@ export class Dictation {
 		this.cancel();
 		const token = this.options.getToken();
 		if (!token) {
-			this.options.onState("error", "Sign in before starting dictation.");
+			this.options.onState("error", "Dictation is not connected yet. Please try again.");
 			return;
 		}
 		const s: Session = {

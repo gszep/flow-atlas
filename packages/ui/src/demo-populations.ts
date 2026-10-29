@@ -1,3 +1,4 @@
+import { DemoToolError } from "./demo-tool-errors.js";
 import type { SelectionAnalysis, SelectionSpec } from "./selection-engine.js";
 
 export interface DemoPopulation {
@@ -9,12 +10,13 @@ export interface DemoPopulation {
 	color: string;
 	rationale: string;
 	refines: string | null;
+	within?: string;
 	accepted: boolean;
 }
 const COLORS = ["#ffcc66", "#60d6b4", "#82b5ff", "#e897ff", "#ff9485", "#c7dc66"];
 export function populationName(value: unknown): string {
 	if (typeof value !== "string" || !value.trim() || value.trim().length > 80)
-		throw new Error("Choose a population name of 1–80 characters");
+		throw new DemoToolError("invalid_name", "Choose a population name of 1–80 characters");
 	return value.trim();
 }
 
@@ -24,11 +26,19 @@ export class DemoPopulations {
 	readonly items: DemoPopulation[] = [];
 	checkRevision(expected: unknown) {
 		if (expected !== this.revision)
-			throw new Error(`Stale revision: expected ${this.revision}; inspect_dataset again`);
+			throw new DemoToolError(
+				"stale_revision",
+				`Stale revision: expected ${this.revision}; inspect_dataset again`,
+				{ revision: this.revision },
+			);
 	}
 	get(id: unknown) {
 		const item = this.items.find((p) => p.id === id);
-		if (!item) throw new Error("Population not found");
+		if (!item)
+			throw new DemoToolError(
+				"population_not_found",
+				"Saved population not found; use an id from list_populations. Imported references use ref:<index> for inspection.",
+			);
 		return item;
 	}
 	add(input: Omit<DemoPopulation, "id" | "color" | "accepted">, expected: number): DemoPopulation {
@@ -52,7 +62,8 @@ export class DemoPopulations {
 		this.checkRevision(expected);
 		const item = this.get(id);
 		if (actor === "agent" && (item.actor === "human" || item.accepted))
-			throw new Error(
+			throw new DemoToolError(
+				"population_protected",
 				"Preserve the human-finalized selection; create a proposed refinement instead",
 			);
 		item.name = populationName(name);
@@ -62,7 +73,10 @@ export class DemoPopulations {
 		this.checkRevision(expected);
 		const item = this.get(id);
 		if (actor === "agent" && (item.actor === "human" || item.accepted))
-			throw new Error("Only the human may remove a finalized population");
+			throw new DemoToolError(
+				"population_protected",
+				"Only the human may remove a finalized population. Create a separate proposal instead.",
+			);
 		this.items.splice(this.items.indexOf(item), 1);
 		this.revision++;
 	}

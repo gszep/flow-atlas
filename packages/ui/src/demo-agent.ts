@@ -1,9 +1,11 @@
 /** Browser-only transport. Session credentials and completed turns stay in memory. */
+import { DemoToolError } from "./demo-tool-errors.js";
 export type AgentEvent = {
 	type: "status" | "text" | "tool-call" | "tool-result" | "error";
 	text: string;
 	name?: string;
 	id?: string;
+	details?: string;
 };
 
 type Invoke = (name: string, input: unknown, signal: AbortSignal) => Promise<unknown>;
@@ -30,6 +32,7 @@ const TOOLS = new Set([
 ]);
 const HISTORY_BYTES = 120 * 1024;
 const RESULT_BYTES = 24 * 1024;
+const MAX_ROUNDS = 12;
 export const AGENT_EVENT_TEXT_LIMIT = 4000;
 const encoder = new TextEncoder();
 const bytes = (value: string) => encoder.encode(value).byteLength;
@@ -39,6 +42,24 @@ const record = (value: unknown): value is Record<string, unknown> =>
 class AgentFailure extends Error {}
 function fail(message: string): never {
 	throw new AgentFailure(message);
+}
+function toolSummary(name: string, serialized: string): string {
+	const value: unknown = JSON.parse(serialized);
+	if (!record(value)) return `${name} completed.`;
+	if (record(value.error) && typeof value.error.message === "string") return value.error.message;
+	if (typeof value.name === "string" && typeof value.count === "number") {
+		const within = typeof value.withinName === "string" ? ` within ${value.withinName}` : "";
+		const overlap =
+			record(value.overlap) && typeof value.overlap.ofWithin === "number"
+				? ` (${(value.overlap.ofWithin * 100).toFixed(1)}% of the seed)`
+				: "";
+		return `${value.name}: ${value.count.toLocaleString()} cells${within}${overlap}${Array.isArray(value.channels) ? `; ${value.channels.length} channel profiles` : ""}.`;
+	}
+	if (typeof value.total === "number")
+		return `Dataset: ${value.total.toLocaleString()} cells; ${Array.isArray(value.channels) ? value.channels.length : 0} channels.`;
+	if (Array.isArray(value.references))
+		return `${value.references.length} imported references and ${Array.isArray(value.populations) ? value.populations.length : 0} named populations available.`;
+	return `${name} completed.`;
 }
 
 export class DemoAgent {
@@ -84,8 +105,7 @@ export class DemoAgent {
 		}
 	}
 
-	async connect(accessCode: string): Promise<void> {
-		if (!accessCode.trim()) fail("Enter an access code.");
+	async connect(_legacyAccessCode?: string): Promise<void> {
 		this.reset();
 		this.session = null;
 		const epoch = this.epoch;
@@ -96,7 +116,7 @@ export class DemoAgent {
 				const response = await this.fetcher("/api/demo/session", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ accessCode }),
+					body: "{}",
 					signal: controller.signal,
 				});
 				this.check(epoch, controller);
@@ -193,8 +213,7 @@ export class DemoAgent {
 	): Promise<void> {
 		if (this.active) fail("Agent is busy.");
 		if (!text.trim() || text.length > 4000) fail("Request must contain 1–4000 characters.");
-		const session = this.session;
-		if (!session) fail("Connect before asking the agent.");
+		let session: Connection = this.session ?? fail("Connect before asking the agent.");
 		const controller = new AbortController();
 		this.active = controller;
 		const epoch = this.epoch;
@@ -233,22 +252,48 @@ export class DemoAgent {
 						message.content.flatMap((block) => (block.type === "tool_use" ? [block.id] : [])),
 					),
 			);
-			for (let round = 0; round < 8; round++) {
+			for (let round = 0; round < MAX_ROUNDS; round++) {
 				const messages = fit();
-				emit({ type: "status", text: `Contacting agent (${round + 1}/8).` });
-				const response = await this.fetcher("/api/demo/agent", {
-					method: "POST",
-					headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
-					body: JSON.stringify({ messages }),
-					signal: controller.signal,
-				});
+				emit({ type: "status", text: `Contacting agent (${round + 1}/${MAX_ROUNDS}).` });
+				const request = () =>
+					this.fetcher("/api/demo/agent", {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							Authorization: `Bearer ${session.token}`,
+						},
+						body: JSON.stringify({ messages }),
+						signal: controller.signal,
+					});
+				let response = await request();
+				if (response.status === 401) {
+					// A scaled-down server may have lost its ephemeral session. The failed
+					// request executed no tools, so renewing and resending it once is safe.
+					const renewed = await this.fetcher("/api/demo/session", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: "{}",
+						signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+					});
+					this.check(epoch, controller);
+					if (!renewed.ok) fail("Demo session unavailable. Please try again shortly.");
+					const next = await renewed.json();
+					this.check(epoch, controller);
+					if (!record(next) || typeof next.token !== "string" || typeof next.expiresAt !== "number")
+						fail("Invalid demo session.");
+					session = { token: next.token, expiresAt: next.expiresAt };
+					this.session = session;
+					response = await request();
+				}
 				this.check(epoch, controller);
+				if (response.status === 429)
+					fail("Demo usage limit reached. Please wait before trying again.");
 				if (!response.ok) fail("Agent request failed.");
 				const value: unknown = await response.json();
 				this.check(epoch, controller);
 				const content = this.validate(value, ids);
 				const tools = content.filter((block): block is ToolBlock => block.type === "tool_use");
-				if (calls + tools.length > 24 || (round === 7 && tools.length))
+				if (calls + tools.length > 24 || (round === MAX_ROUNDS - 1 && tools.length))
 					fail("Agent tool budget exceeded.");
 				turn.push({ role: "assistant", content });
 				fit(); // Reject oversized/malformed responses before any side effects.
@@ -273,22 +318,38 @@ export class DemoAgent {
 						this.check(epoch, controller);
 						const serialized = JSON.stringify(output);
 						if (serialized === undefined || bytes(serialized) > RESULT_BYTES)
-							fail("Tool result exceeds the size limit or is not JSON.");
+							throw new DemoToolError(
+								"result_too_large",
+								"Tool result exceeds the response budget. Inspect without includeGeometry or request a narrower operation.",
+							);
 						result = { type: "tool_result", tool_use_id: tool.id, content: serialized };
-					} catch {
+					} catch (error) {
 						this.check(epoch, controller);
-						const message = "Tool failed or returned an invalid/oversized result.";
+						const message =
+							error instanceof DemoToolError
+								? error.message
+								: "Tool execution failed. Inspect the current dataset state before retrying.";
+						const detail =
+							error instanceof DemoToolError
+								? { code: error.code, message, recovery: error.recovery }
+								: { code: "execution_failed", message };
 						result = {
 							type: "tool_result",
 							tool_use_id: tool.id,
-							content: JSON.stringify({ error: message }),
+							content: JSON.stringify({ error: detail }),
 							is_error: true,
 						};
 						emit({ type: "error", name: tool.name, id: tool.id, text: message });
 					}
 					results.push(result);
 					fit();
-					emit({ type: "tool-result", name: tool.name, id: tool.id, text: result.content });
+					emit({
+						type: "tool-result",
+						name: tool.name,
+						id: tool.id,
+						text: toolSummary(tool.name, result.content),
+						details: result.content.slice(0, AGENT_EVENT_TEXT_LIMIT),
+					});
 				}
 			}
 		} catch (error) {

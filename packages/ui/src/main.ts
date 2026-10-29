@@ -30,11 +30,9 @@ const progressBar = $<HTMLProgressElement>("download-progress");
 const retry = $<HTMLButtonElement>("retry-load");
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const clearRecord = () => clearComputationRecord($("computation-record"));
-// Optional private demo-launch link: consume the application access code from
-// the fragment (never sent to the server in the URL), then remove it from history.
+// Remove legacy launch credentials; every visitor now gets a bounded demo session.
 const launchParams = new URLSearchParams(location.hash.slice(1));
-const demoAccessCode = launchParams.get("demo") ?? undefined;
-if (demoAccessCode) {
+if (launchParams.has("demo")) {
 	launchParams.delete("demo");
 	history.replaceState(
 		null,
@@ -685,7 +683,6 @@ async function main() {
 					await browserCache.retain(new Set());
 					location.reload();
 				},
-				demoAccessCode,
 			);
 			console.log(
 				`Ready: ${ws.n} events in ${(totalMs / 1000).toFixed(1)}s wall time (${cached ? "cached map" : "computed"})`,

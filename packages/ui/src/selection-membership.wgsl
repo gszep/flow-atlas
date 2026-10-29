@@ -2,7 +2,7 @@
 struct Params {
   count: u32, words: u32, population: u32, vertices: u32,
   mode: u32, intersect: u32, finalPass: u32, rangeFlags: u32,
-  lo: f32, hi: f32, _p0: u32, _p1: u32,
+  lo: f32, hi: f32, boundsLow: vec2f, boundsHigh: vec2f, _pad: vec2f,
 };
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read> positions: array<vec2f>;
@@ -15,6 +15,7 @@ struct Params {
 fn finite(v: f32) -> bool { return (bitcast<u32>(v) & 0x7fffffffu) < 0x7f800000u; }
 fn inside(v: vec2f) -> bool {
   if (!finite(v.x) || !finite(v.y)) { return false; }
+  if (any(v < p.boundsLow) || any(v > p.boundsHigh)) { return false; }
   var hit = false;
   var j = p.vertices - 1u;
   for (var k = 0u; k < p.vertices; k++) {
@@ -43,11 +44,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     hit = inside(positions[i]);
   } else if (p.mode == 1u) {
     hit = (labels[i * p.words + p.population / 32u] & (1u << (p.population % 32u))) != 0u;
-  } else {
+  } else if (p.mode == 2u) {
     let v = column[i];
     hit = finite(v) && ((p.rangeFlags & 1u) == 0u || v >= p.lo) && ((p.rangeFlags & 2u) == 0u || v <= p.hi);
-    if (p.intersect != 0u) { hit = hit && mask[i] != 0u; }
-  }
+  } else { hit = true; }
+  if (p.intersect != 0u) { hit = hit && mask[i] != 0u; }
   mask[i] = select(0u, 1u, hit);
   if (p.finalPass != 0u && hit) { atomicAdd(&selected, 1u); }
 }

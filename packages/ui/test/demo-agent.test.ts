@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AGENT_EVENT_TEXT_LIMIT, type AgentEvent, DemoAgent } from "../src/demo-agent.js";
+import { DemoToolError } from "../src/demo-tool-errors.js";
 
 const done = (text = "Finished") => ({
 	stop_reason: "end_turn",
@@ -46,6 +47,45 @@ function harness(replies: unknown[]) {
 const body = (request: RequestInit | undefined) => JSON.parse(String(request?.body));
 
 describe("DemoAgent CPU transport", () => {
+	it("renews an expired guest session once without repeating tool execution", async () => {
+		let sessions = 0,
+			calls = 0;
+		const fetcher = vi.fn(async (url: string | URL | Request) => {
+			if (url === "/api/demo/session")
+				return response({ token: `guest-${++sessions}`, expiresAt: Date.now() + 60000 });
+			calls++;
+			return calls === 1 ? new Response("{}", { status: 401 }) : response(done("ready"));
+		});
+		const agent = new DemoAgent(fetcher),
+			invoke = vi.fn();
+		await agent.connect();
+		await agent.ask("inspect", {}, invoke, vi.fn());
+		expect(sessions).toBe(2);
+		expect(calls).toBe(2);
+		expect(invoke).not.toHaveBeenCalled();
+		expect(agent.connection()?.token).toBe("guest-2");
+	});
+	it("opens a guest session without sending an access code", async () => {
+		const h = harness([]);
+		await h.agent.connect();
+		const request = h.fetcher.mock.calls.find(([url]) => url === "/api/demo/session");
+		expect(JSON.parse(String(request?.[1]?.body))).toEqual({});
+	});
+	it("returns actionable lookup errors to the model instead of an opaque failure", async () => {
+		const h = harness([use(tool("bad", "inspect_population")), done()]);
+		await h.agent.connect();
+		h.invoke.mockRejectedValueOnce(
+			new DemoToolError("population_not_found", "Use ref:20 for the imported EMRA reference", {
+				id: "ref:20",
+			}),
+		);
+		await h.agent.ask("inspect references", {}, h.invoke, h.onEvent);
+		const next = body(h.requests[1]);
+		const result = next.messages.at(-1).content[0];
+		expect(result.is_error).toBe(true);
+		expect(JSON.parse(result.content).error.code).toBe("population_not_found");
+		expect(result.content).toContain("ref:20");
+	});
 	it("bounds a stalled connection and never admits its late token", async () => {
 		vi.useFakeTimers();
 		try {
@@ -264,13 +304,13 @@ describe("DemoAgent CPU transport", () => {
 		await expect(h.agent.ask("inspect", {}, h.invoke, h.onEvent)).rejects.toThrow("budget");
 		expect(h.invoke).toHaveBeenCalledTimes(24);
 		expect(h.requests).toHaveLength(2);
-		const rounds = harness(Array.from({ length: 8 }, (_, i) => use(tool(`round-${i}`))));
+		const rounds = harness(Array.from({ length: 12 }, (_, i) => use(tool(`round-${i}`))));
 		await rounds.agent.connect("code");
 		await expect(rounds.agent.ask("inspect", {}, rounds.invoke, rounds.onEvent)).rejects.toThrow(
 			"budget",
 		);
-		expect(rounds.requests).toHaveLength(8);
-		expect(rounds.invoke).toHaveBeenCalledTimes(7);
+		expect(rounds.requests).toHaveLength(12);
+		expect(rounds.invoke).toHaveBeenCalledTimes(11);
 	});
 
 	it("sanitizes private exceptions and bounds tool results in UTF-8 bytes", async () => {

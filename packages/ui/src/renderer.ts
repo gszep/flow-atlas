@@ -148,6 +148,27 @@ export class PointRenderer {
 	private camera(): Camera {
 		return { zoom: this.zoom, panX: this.panX, panY: this.panY };
 	}
+	async focus(bounds: Bounds): Promise<void> {
+		if (!Object.values(bounds).every(Number.isFinite)) throw new Error("Invalid population bounds");
+		const base = this.screenTransform(),
+			sx = base.sx / this.zoom,
+			sy = base.sy / this.zoom;
+		const span =
+			Math.max(this.bounds.maxX - this.bounds.minX, this.bounds.maxY - this.bounds.minY) || 1;
+		this.zoom = Math.max(
+			0.02,
+			Math.min(
+				10000,
+				1.65 / (Math.max(bounds.maxX - bounds.minX, span / 1000) * sx),
+				1.65 / (Math.max(bounds.maxY - bounds.minY, span / 1000) * sy),
+			),
+		);
+		this.panX =
+			((this.bounds.minX + this.bounds.maxX - (bounds.minX + bounds.maxX)) / 2) * sx * this.zoom;
+		this.panY =
+			((this.bounds.minY + this.bounds.maxY - (bounds.minY + bounds.maxY)) / 2) * sy * this.zoom;
+		await this.draw(true);
+	}
 	/** Embedding coordinates, distinct from raw-channel gate space. */
 	dataToScreen(point: { x: number; y: number }): { x: number; y: number } {
 		const { sx, sy, ox, oy } = this.screenTransform();
