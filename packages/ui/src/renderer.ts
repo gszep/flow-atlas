@@ -13,6 +13,12 @@ export class PointRenderer {
 	onViewChange: (() => void) | null = null;
 	private readonly ctx: GPUCanvasContext;
 	private readonly pipeline: GPURenderPipeline;
+	private readonly layeredPipeline: GPURenderPipeline;
+	private layered = false;
+	private depth: GPUTexture | null = null;
+	private frame = 0;
+	private lastFrame: { sequence: number; events: number; layered: boolean; camera: Camera } | null =
+		null;
 	private readonly viewBuf: GPUBuffer;
 	private readonly format: GPUTextureFormat;
 	private bindGroup: GPUBindGroup | null = null;
@@ -47,8 +53,27 @@ export class PointRenderer {
 			usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST,
 		});
 		const module = device.createShaderModule({ code: pointsSrc });
-		this.pipeline = device.createRenderPipeline({
-			layout: "auto",
+		const layout = device.createPipelineLayout({
+			bindGroupLayouts: [
+				device.createBindGroupLayout({
+					entries: [
+						{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+						{
+							binding: 1,
+							visibility: GPUShaderStage.VERTEX,
+							buffer: { type: "read-only-storage" },
+						},
+						{
+							binding: 2,
+							visibility: GPUShaderStage.VERTEX,
+							buffer: { type: "read-only-storage" },
+						},
+					],
+				}),
+			],
+		});
+		const descriptor: GPURenderPipelineDescriptor = {
+			layout,
 			vertex: { module, entryPoint: "vs" },
 			fragment: {
 				module,
@@ -64,6 +89,11 @@ export class PointRenderer {
 				],
 			},
 			primitive: { topology: "triangle-strip" },
+		};
+		this.pipeline = device.createRenderPipeline(descriptor);
+		this.layeredPipeline = device.createRenderPipeline({
+			...descriptor,
+			depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
 		});
 		this.viewBuf = device.createBuffer({
 			size: 32,
@@ -77,6 +107,8 @@ export class PointRenderer {
 			this.cancelGesture();
 			this.target?.destroy();
 			this.target = null;
+			this.depth?.destroy();
+			this.depth = null;
 		});
 	}
 
@@ -86,6 +118,7 @@ export class PointRenderer {
 		this.pending = false;
 		this.dataReady = false;
 		this.count = count;
+		this.layered = false;
 		this.bounds = bounds;
 		this.bindGroup = this.device.createBindGroup({
 			layout: this.pipeline.getBindGroupLayout(0),
@@ -114,6 +147,8 @@ export class PointRenderer {
 			this.canvas.height = budget.height;
 			this.target?.destroy();
 			this.target = null;
+			this.depth?.destroy();
+			this.depth = null;
 		}
 	}
 	private cancelGesture() {
@@ -199,7 +234,8 @@ export class PointRenderer {
 		};
 	}
 	/** Change a display buffer without resetting the user's camera. */
-	setColors(pos: GPUBuffer, color: GPUBuffer): void {
+	setColors(pos: GPUBuffer, color: GPUBuffer, layered = false): void {
+		this.layered = layered;
 		this.bindGroup = this.device.createBindGroup({
 			layout: this.pipeline.getBindGroupLayout(0),
 			entries: [this.viewBuf, pos, color].map((buffer, binding) => ({
@@ -207,6 +243,19 @@ export class PointRenderer {
 				resource: { buffer },
 			})),
 		});
+	}
+	viewState() {
+		const rect = this.canvas.getBoundingClientRect();
+		return {
+			ready: !this.stopped && this.dataReady && !!this.bindGroup,
+			frame: this.lastFrame,
+			camera: this.camera(),
+			viewport: { width: this.canvas.clientWidth, height: this.canvas.clientHeight },
+			visibleBounds: {
+				topLeft: this.screenToData(rect.left, rect.top),
+				bottomRight: this.screenToData(rect.right, rect.bottom),
+			},
+		};
 	}
 	private gesture() {
 		if (!this.dataReady || this.stopped || this.gestureFrame !== null) return;
@@ -250,6 +299,14 @@ export class PointRenderer {
 		);
 		const bindGroup = this.bindGroup,
 			count = this.count;
+		const camera = this.camera(),
+			layered = this.layered;
+		if (layered)
+			this.depth ??= this.device.createTexture({
+				size: [w, h],
+				format: "depth24plus",
+				usage: GPUTextureUsage.RENDER_ATTACHMENT,
+			});
 		if (!live)
 			this.target ??= this.device.createTexture({
 				size: [w, h],
@@ -263,6 +320,16 @@ export class PointRenderer {
 			if (this.stopped || revision !== this.revision) return;
 			const enc = this.device.createCommandEncoder();
 			const pass = enc.beginRenderPass({
+				...(layered
+					? {
+							depthStencilAttachment: {
+								view: (this.depth as GPUTexture).createView(),
+								depthClearValue: 1,
+								depthLoadOp: batch.first === 0 ? ("clear" as const) : ("load" as const),
+								depthStoreOp: "store" as const,
+							},
+						}
+					: {}),
 				colorAttachments: [
 					{
 						view: target.createView(),
@@ -272,7 +339,7 @@ export class PointRenderer {
 					},
 				],
 			});
-			pass.setPipeline(this.pipeline);
+			pass.setPipeline(layered ? this.layeredPipeline : this.pipeline);
 			pass.setBindGroup(0, bindGroup);
 			if (batch.count) pass.draw(4, batch.count, 0, batch.first);
 			pass.end();
@@ -280,7 +347,11 @@ export class PointRenderer {
 			await this.device.queue.onSubmittedWorkDone();
 			if (!live) this.onProgress(batch.first + batch.count, count);
 		}
-		if (live || this.stopped || revision !== this.revision) return;
+		if (this.stopped || revision !== this.revision) return;
+		if (live) {
+			this.lastFrame = { sequence: ++this.frame, events: count, layered, camera };
+			return;
+		}
 		const present = this.device.createCommandEncoder();
 		present.copyTextureToTexture({ texture: target }, { texture: this.ctx.getCurrentTexture() }, [
 			w,
@@ -288,6 +359,7 @@ export class PointRenderer {
 		]);
 		this.device.queue.submit([present.finish()]);
 		await this.device.queue.onSubmittedWorkDone();
+		this.lastFrame = { sequence: ++this.frame, events: count, layered, camera };
 	}
 
 	private attachInteraction() {

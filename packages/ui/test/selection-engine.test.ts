@@ -5,6 +5,7 @@ import {
 	intersectSelections,
 	SelectionEngine,
 	type SelectionSpec,
+	unionSelections,
 	validateSelectionSpec,
 } from "../src/selection-engine.js";
 
@@ -232,6 +233,23 @@ it("GPU selections cover bounded windows, nested label words, missing values, po
 		expect(all.count).toBe(n);
 		expect(all.bounds).toEqual({ minX: 0, maxX: 2, minY: 0, maxY: 2 });
 		expect(all.channels.map((c) => c.finiteCount)).toEqual([5, 5]);
+		const joined = unionSelections(reference, { kind: "reference", population: 0 });
+		expect((await engine.analyze(joined)).count).toBe(4);
+		expect((await engine.analyze(unionSelections(reference, reference))).count).toBe(3);
+		expect((await engine.analyze(intersectSelections(joined, polygon))).count).toBe(4);
+		await engine.compose(
+			[
+				{ source: reference, color: 0x0000ff },
+				{ source: positive, color: 0x00ff00 },
+			],
+			source,
+			target,
+		);
+		const painted = await readback(device, target, Uint32Array);
+		expect([painted[0], painted[1], painted[2], painted[tail]]).toEqual([
+			0xfe0000ff, 0xfe0000ff, 0xfe00ff00, 0xfe00ff00,
+		]);
+		expect(await readback(device, source, Uint32Array)).toEqual(colors);
 		expect((await bounded.analyze(polygon)).count).toBe(4);
 		await engine.highlight(reference, source, target);
 		expect(await readback(device, source, Uint32Array)).toEqual(colors);

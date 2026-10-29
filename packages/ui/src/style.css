@@ -217,6 +217,20 @@ canvas {
 	overflow: auto;
 	font-size: 11px;
 }
+.map-agent-status {
+	position: absolute;
+	top: 12px;
+	left: 12px;
+	max-width: 60%;
+	padding: 8px 12px;
+	border: 1px solid #60d6b4;
+	border-radius: 6px;
+	background: #142630ed;
+	color: #d9fff4;
+	pointer-events: none;
+	z-index: 2;
+	font-weight: 600;
+}
 #selection-overlay {
 	position: absolute;
 	inset: 0;

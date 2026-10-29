@@ -2,6 +2,7 @@ import { createStorage, readback, type Window, windows } from "@flow-atlas/compu
 import distributionSource from "./selection-distribution.wgsl?raw";
 import highlightSource from "./selection-highlight.wgsl?raw";
 import membershipSource from "./selection-membership.wgsl?raw";
+import unionSource from "./selection-union.wgsl?raw";
 import type { LoadedWorkspace } from "./workspace.js";
 
 export type Point = { x: number; y: number };
@@ -11,31 +12,44 @@ export type LeafSelectionSpec =
 	| { kind: "polygon"; points: Point[] }
 	| { kind: "reference"; population: number }
 	| { kind: "ranges"; ranges: Array<{ channel: number; min: number | null; max: number | null }> };
-export type SelectionSpec =
-	| LeafSelectionSpec
-	| { kind: "intersection"; selections: LeafSelectionSpec[] };
-export function intersectSelections(...specs: SelectionSpec[]): SelectionSpec {
-	const selections = specs.flatMap((spec) =>
-		spec.kind === "intersection" ? spec.selections : [spec],
+type Conjunction = LeafSelectionSpec | { kind: "intersection"; selections: LeafSelectionSpec[] };
+export type SelectionSpec = Conjunction | { kind: "union"; selections: Conjunction[] };
+function clauses(spec: SelectionSpec): LeafSelectionSpec[][] {
+	return (spec.kind === "union" ? spec.selections : [spec]).map((part) =>
+		part.kind === "intersection" ? part.selections : [part],
 	);
+}
+function fromClauses(parts: LeafSelectionSpec[][]): SelectionSpec {
 	if (
-		selections.length < 1 ||
-		selections.length > 8 ||
-		selections.reduce(
-			(count, spec) => count + (spec.kind === "ranges" ? spec.ranges.length : 1),
-			0,
-		) > 16
+		!parts.length ||
+		parts.length > 8 ||
+		parts.some((p) => !p.length || p.length > 8) ||
+		parts.flat().reduce((n, p) => n + (p.kind === "ranges" ? p.ranges.length : 1), 0) > 32
 	)
-		throw new Error("Selection intersection exceeds the supported predicate limit");
-	return structuredClone(
-		selections.length === 1
-			? (selections[0] as LeafSelectionSpec)
-			: { kind: "intersection" as const, selections },
+		throw new Error("Combined selection exceeds the supported predicate limit");
+	const sources: Conjunction[] = parts.map((p) =>
+		p.length === 1 ? (p[0] as LeafSelectionSpec) : { kind: "intersection", selections: p },
 	);
+	return structuredClone(
+		sources.length === 1 ? (sources[0] as Conjunction) : { kind: "union", selections: sources },
+	);
+}
+export function unionSelections(...specs: SelectionSpec[]): SelectionSpec {
+	return fromClauses(specs.flatMap(clauses));
+}
+export function intersectSelections(...specs: SelectionSpec[]): SelectionSpec {
+	if (!specs.length) throw new Error("Selection requires a source");
+	let result: LeafSelectionSpec[][] = [[]];
+	for (const spec of specs) {
+		result = result.flatMap((a) => clauses(spec).map((b) => [...a, ...b]));
+		fromClauses(result);
+	}
+	return fromClauses(result);
 }
 export interface SelectionAnalysis {
 	count: number;
 	total: number;
+	plottableCount?: number;
 	bounds?: { minX: number; maxX: number; minY: number; maxY: number } | null;
 	channels: Array<{
 		index: number;
@@ -64,7 +78,17 @@ const abort = (signal?: AbortSignal) => signal?.throwIfAborted();
 
 /** Validate metadata only. Membership is evaluated exclusively on the GPU using stored F32 values. */
 export function validateSelectionSpec(spec: SelectionSpec, channels: number, populations: number) {
-	if (spec.kind === "intersection") {
+	if (spec.kind === "union") {
+		if (
+			!Array.isArray(spec.selections) ||
+			spec.selections.length < 2 ||
+			spec.selections.length > 8 ||
+			spec.selections.some((part) => (part as SelectionSpec).kind === "union")
+		)
+			throw new Error("Union requires 2–8 non-union selections");
+		for (const part of spec.selections) validateSelectionSpec(part, channels, populations);
+		unionSelections(spec);
+	} else if (spec.kind === "intersection") {
 		if (
 			!Array.isArray(spec.selections) ||
 			spec.selections.length < 2 ||
@@ -115,6 +139,7 @@ export class SelectionEngine {
 	private readonly membership: Kernel;
 	private readonly distribution: Kernel;
 	private readonly highlighting: Kernel;
+	private readonly combining: Kernel;
 	private readonly chunks: Window[];
 	private pending: Promise<unknown> = Promise.resolve();
 
@@ -148,6 +173,7 @@ export class SelectionEngine {
 		);
 		this.distribution = this.kernel(distributionSource, [true, true, false], [true, true, false]);
 		this.highlighting = this.kernel(highlightSource, [true, true, false], [true, true, true]);
+		this.combining = this.kernel(unionSource, [true, false, false], [true, true, false]);
 	}
 
 	private kernel(code: string, readOnly: boolean[], dynamic: boolean[]): Kernel {
@@ -234,8 +260,12 @@ export class SelectionEngine {
 	): Promise<T> {
 		abort(signal);
 		validateSelectionSpec(spec, this.workspace.channels.length, this.workspace.populations.length);
-		const selections = spec.kind === "intersection" ? spec.selections : [spec];
-		if (selections.some((part) => part.kind === "polygon") && !this.workspace.embedding)
+		if (
+			clauses(spec)
+				.flat()
+				.some((part) => part.kind === "polygon") &&
+			!this.workspace.embedding
+		)
 			throw new Error("Embedding is unavailable");
 		const owned: GPUBuffer[] = [];
 		const own = (size: number) => {
@@ -253,6 +283,27 @@ export class SelectionEngine {
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 			});
 			owned.push(uniform);
+			if (spec.kind === "union") {
+				for (const part of spec.selections)
+					await this.withMask(part, signal, async (child) => {
+						for (const [i, chunk] of this.chunks.entries())
+							await this.dispatch(
+								this.combining,
+								uniform,
+								new Uint32Array([chunk.count, 0, 0, 0]),
+								[
+									this.window(child, chunk),
+									this.window(mask, chunk),
+									{ buffer: selected, size: 4 },
+								],
+								chunk.count,
+								signal,
+								(i + 1) % 8 === 0 || i === this.chunks.length - 1,
+							);
+					});
+				return await use(mask, selected, uniform, own);
+			}
+			const selections = spec.kind === "intersection" ? spec.selections : [spec];
 			const passes = selections.flatMap((selection) =>
 				(selection.kind === "ranges" ? selection.ranges : [null]).map((range) => ({
 					selection,
@@ -387,6 +438,7 @@ export class SelectionEngine {
 					});
 				}
 				let bounds: SelectionAnalysis["bounds"] = null;
+				let plottableCount = 0;
 				if (count && this.workspace.embedding) {
 					const axes: Array<[number, number] | null> = [];
 					for (const axis of [0, 1]) {
@@ -406,6 +458,7 @@ export class SelectionEngine {
 								(i + 1) % 8 === 0 || i === this.chunks.length - 1,
 							);
 						const result = await readback(this.device, summary, Uint32Array, 12);
+						if (axis === 0) plottableCount = result[2] as number;
 						axes.push(
 							result[2]
 								? [decodeOrdered(result[0] as number), decodeOrdered(result[1] as number)]
@@ -416,7 +469,7 @@ export class SelectionEngine {
 						bounds = { minX: axes[0][0], maxX: axes[0][1], minY: axes[1][0], maxY: axes[1][1] };
 				}
 				abort(options.signal);
-				return { count, total: this.workspace.n, channels, bounds };
+				return { count, total: this.workspace.n, channels, bounds, plottableCount };
 			}),
 		);
 	}
@@ -453,5 +506,66 @@ export class SelectionEngine {
 					);
 			}),
 		);
+	}
+	/** Rebuild a display overlay from immutable base colors. Last matching layer wins. */
+	compose(
+		layers: Array<{ source: SelectionSpec; color: number }>,
+		sourceColors: GPUBuffer,
+		targetColors: GPUBuffer,
+		signal?: AbortSignal,
+	): Promise<void> {
+		if (
+			sourceColors === targetColors ||
+			sourceColors.size < this.workspace.n * 4 ||
+			targetColors.size < this.workspace.n * 4 ||
+			layers.length > 33 ||
+			layers.some((l) => !Number.isInteger(l.color) || l.color < 0 || l.color > 0xffffff)
+		)
+			return Promise.reject(new Error("Invalid display layers"));
+		const snapshot = structuredClone(layers);
+		return this.exclusive(async () => {
+			const uniform = this.device.createBuffer({
+				size: 16,
+				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+			});
+			const dummy = createStorage(this.device, 4);
+			try {
+				for (const [i, chunk] of this.chunks.entries())
+					await this.dispatch(
+						this.highlighting,
+						uniform,
+						new Uint32Array([chunk.count, 0, 1, 0]),
+						[
+							{ buffer: dummy, size: 4 },
+							this.window(sourceColors, chunk),
+							this.window(targetColors, chunk),
+						],
+						chunk.count,
+						signal,
+						(i + 1) % 8 === 0 || i === this.chunks.length - 1,
+					);
+				for (const layer of snapshot)
+					await this.withMask(layer.source, signal, async (mask) => {
+						for (const [i, chunk] of this.chunks.entries())
+							await this.dispatch(
+								this.highlighting,
+								uniform,
+								new Uint32Array([chunk.count, layer.color, 2, 0]),
+								[
+									this.window(mask, chunk),
+									this.window(sourceColors, chunk),
+									this.window(targetColors, chunk),
+								],
+								chunk.count,
+								signal,
+								(i + 1) % 8 === 0 || i === this.chunks.length - 1,
+							);
+					});
+			} finally {
+				await this.device.queue.onSubmittedWorkDone().catch(() => {});
+				uniform.destroy();
+				dummy.destroy();
+			}
+		});
 	}
 }

@@ -40,7 +40,7 @@ test("official MCP client negotiates, lists and calls a browser-backed tool", as
 				requestInit: { headers },
 			}),
 		);
-		assert.equal((await client.listTools()).tools.length, 8);
+		assert.equal((await client.listTools()).tools.length, 10);
 		const pending = client.callTool({ name: "inspect_dataset", arguments: {} });
 		let command;
 		for (let attempt = 0; attempt < 50; attempt++) {

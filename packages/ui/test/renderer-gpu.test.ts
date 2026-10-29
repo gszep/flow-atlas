@@ -169,6 +169,32 @@ it("four-vertex batched and live rendering match the original six-vertex point i
 			}
 	expect(difference).toBe(0);
 	shifted.destroy();
+	// A selected cell drawn first must remain visible beneath thousands of later
+	// grey context points at the exact same pixel (the reported invisible-result case).
+	device.queue.writeBuffer(pos, 0, new Float32Array(n * 2).fill(0.5));
+	const occluding = new Uint32Array(n).fill(0xff383838);
+	occluding[0] = 0xfe33aaff;
+	device.queue.writeBuffer(color, 0, occluding);
+	renderer.setData(pos, color, n, { minX: 0, maxX: 1, minY: 0, maxY: 1 });
+	renderer.setColors(pos, color, true);
+	await renderer.draw(true);
+	const probe = device.createBuffer({
+		size: size * size * 4,
+		usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+	});
+	const encoded = device.createCommandEncoder();
+	encoded.copyTextureToBuffer({ texture: actual }, { buffer: probe, bytesPerRow: size * 4 }, [
+		size,
+		size,
+	]);
+	device.queue.submit([encoded.finish()]);
+	await probe.mapAsync(GPUMapMode.READ);
+	const center = (32 * size + 32) * 4;
+	expect([...new Uint8Array(probe.getMappedRange()).slice(center, center + 4)]).toEqual([
+		255, 170, 51, 255,
+	]);
+	expect(renderer.viewState().frame?.layered).toBe(true);
+	probe.destroy();
 	expect(await device.popErrorScope()).toBeNull();
 	for (const buffer of [...buffers, pos, color, view]) buffer.destroy();
 	actual.destroy();

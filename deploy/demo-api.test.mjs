@@ -369,7 +369,7 @@ test("MCP discovery, isolated commands delivered once, results and revocation", 
 		(await (await rpc(f, a, "initialize")).json()).result.serverInfo.name,
 		"flow-atlas-demo",
 	);
-	assert.equal((await (await rpc(f, a, "tools/list")).json()).result.tools.length, 8);
+	assert.equal((await (await rpc(f, a, "tools/list")).json()).result.tools.length, 10);
 	assert.equal((await (await rpc(f, a, "no-method")).json()).error.code, -32601);
 	assert.equal(
 		(

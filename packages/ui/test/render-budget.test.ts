@@ -50,6 +50,7 @@ function rendererFixture() {
 		TEXTURE_BINDING: 4,
 	});
 	vi.stubGlobal("GPUBufferUsage", { UNIFORM: 64, COPY_DST: 8 });
+	vi.stubGlobal("GPUShaderStage", { VERTEX: 1 });
 	vi.stubGlobal("window", { devicePixelRatio: 3 });
 	vi.stubGlobal("matchMedia", () => ({ matches: true }));
 	vi.stubGlobal(
@@ -82,6 +83,8 @@ function rendererFixture() {
 		limits: { maxTextureDimension2D: 8192 },
 		lost: new Promise(() => {}),
 		createShaderModule: () => ({}),
+		createBindGroupLayout: () => ({}),
+		createPipelineLayout: () => ({}),
 		createRenderPipeline: () => ({ getBindGroupLayout: () => ({}) }),
 		createBuffer: () => ({}),
 		createBindGroup: () => ({}),

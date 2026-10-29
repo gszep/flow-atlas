@@ -44,8 +44,15 @@ rejects truncated/refused/invalid tool responses. Only aggregate summaries go to
 Browser code executes the validated tools and displays their actual results; there is no
 generated-code execution or arbitrary network/filesystem tool.
 
+An unfinished lasso is preserved automatically when asking the agent to act. Routine
+reversible proposal/view actions proceed without a second permission question. The
+`combine_populations` tool forms a deduplicated GPU union; creation and combination
+show/frame their result and return display state. `inspect_view` reports the current
+renderer frame, camera and displayed layers. Coloured proposals remain visible together,
+with selected overlays in front of grey context points.
+
 `Copy MCP connection` gives a session-scoped Streamable HTTP connection to
-`/api/demo/mcp`. The same eight tools execute through the connected browser. External
+`/api/demo/mcp`. The same ten tools execute through the connected browser. External
 MCP requires that browser to remain open. Stop/reset/reconnect invalidates old polling,
 commands have deadlines and cancellation checks, and mutations check their command lease
 again after analysis. Results are not reported as complete when acknowledgment fails.

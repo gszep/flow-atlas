@@ -12,6 +12,11 @@ const object = (properties, required = Object.keys(properties)) => ({
 });
 const tool = (name, description, input_schema) => ({ name, description, input_schema });
 export const DEMO_TOOLS = [
+	tool(
+		"inspect_view",
+		"Read actual renderer state, displayed population layers and current camera. Use this instead of guessing whether a result is visible.",
+		object({}),
+	),
 	tool("inspect_dataset", "Inspect aggregate demo dataset metadata, not raw events.", object({})),
 	tool(
 		"list_populations",
@@ -86,6 +91,21 @@ export const DEMO_TOOLS = [
 		object({ id: populationId, focus: { type: "boolean" } }, ["id"]),
 	),
 	tool("set_marker", "Choose a marker channel for the demo view.", object({ channel: string })),
+	tool(
+		"combine_populations",
+		"Create one agent-owned union of 2–8 named or imported populations, counting overlapping cells only once. Use for combined groups rather than intermediate seed populations. It automatically displays and frames the result. Optional within restricts the union to a seed; originals are preserved.",
+		object(
+			{
+				expectedRevision: revision,
+				name: string,
+				ids: { type: "array", minItems: 2, maxItems: 8, items: populationId },
+				within: optionalPopulationId,
+				refines: { ...string, type: ["string", "null"] },
+				rationale: { type: "string", maxLength: 2000 },
+			},
+			["expectedRevision", "name", "ids"],
+		),
+	),
 ];
 
 // Deliberately implements only the schema vocabulary above, not arbitrary JSON Schema.
@@ -139,7 +159,12 @@ export const MCP_TOOLS = DEMO_TOOLS.map(({ name, description, input_schema }) =>
 	description,
 	inputSchema: input_schema,
 	annotations: {
-		readOnlyHint: ["inspect_dataset", "list_populations", "inspect_population"].includes(name),
+		readOnlyHint: [
+			"inspect_dataset",
+			"list_populations",
+			"inspect_population",
+			"inspect_view",
+		].includes(name),
 		destructiveHint: name === "delete_population",
 		openWorldHint: false,
 	},
