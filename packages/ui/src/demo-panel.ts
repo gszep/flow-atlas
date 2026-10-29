@@ -16,6 +16,7 @@ import {
 	type SelectionAnalysis,
 	SelectionEngine,
 	type SelectionSpec,
+	unionSelections,
 	validateSelectionSpec,
 } from "./selection-engine.js";
 import { violinPlots } from "./violin-plots.js";
@@ -41,6 +42,13 @@ export class DemoPanel {
 	private asking = false;
 	private readonly engine: SelectionEngine;
 	private readonly highlight: GPUBuffer;
+	private readonly highlightSpare: GPUBuffer;
+	private activeHighlight: GPUBuffer | null = null;
+	private readonly mapStatus = document.createElement("div");
+	private lastDisplay: { status: string; populationIds: string[]; error?: string } = {
+		status: "initial",
+		populationIds: [],
+	};
 	private readonly overlay = document.createElementNS(NS, "svg");
 	private readonly root: HTMLElement;
 	private readonly controller = new AbortController();
@@ -48,6 +56,7 @@ export class DemoPanel {
 	private generation = 0;
 	private draftRevision = 0;
 	private draftBusy = false;
+	private draftTask: Promise<void> | null = null;
 	private selectedId: string | null = null;
 	private referenceFocus: {
 		id: string;
@@ -79,6 +88,11 @@ export class DemoPanel {
 		this.root.inert = false;
 		this.engine = new SelectionEngine(device, workspace, maxBinding);
 		this.highlight = createStorage(device, workspace.n * 4, undefined, "demo.highlight");
+		this.highlightSpare = createStorage(device, workspace.n * 4, undefined, "demo.highlight-spare");
+		this.mapStatus.className = "map-agent-status";
+		this.mapStatus.setAttribute("role", "status");
+		this.mapStatus.textContent = "Lasso cells or ask the agent to explore";
+		this.renderer.canvas.parentElement?.append(this.mapStatus);
 		this.references = referencePopulations(
 			workspace.populations,
 			workspace.populations.map((name) =>
@@ -269,7 +283,7 @@ export class DemoPanel {
 					this.status("Draw a closed area containing at least three points.");
 					return;
 				}
-				void this.inspectDraft({ kind: "polygon", points: drawing.points });
+				this.draftTask = this.inspectDraft({ kind: "polygon", points: drawing.points });
 			},
 			options,
 		);
@@ -343,12 +357,18 @@ export class DemoPanel {
 			if (draftRevision === this.draftRevision) this.draftBusy = false;
 		}
 	}
-	private saveDraft() {
+	private saveDraft(automatic = false) {
 		if (this.lifecycleBusy) throw new Error("Wait for the session transition to finish");
 		if (!this.draft) throw new Error("Draw a selection first");
+		const entered = (this.el("demo-name") as HTMLInputElement).value.trim();
 		const item = this.store.add(
 			{
-				name: populationName((this.el("demo-name") as HTMLInputElement).value),
+				name: populationName(
+					entered ||
+						(automatic
+							? `Your lasso ${this.store.items.filter((p) => p.actor === "human").length + 1}`
+							: ""),
+				),
 				actor: "human",
 				source: this.draft.source,
 				analysis: this.draft.analysis,
@@ -412,25 +432,68 @@ export class DemoPanel {
 			.catch(() => {})
 			.then(async () => {
 				if (ticket !== this.displayRevision || this.controller.signal.aborted) return;
-				await this.renderer.pause();
-				if (source) {
-					const color = this.store.items.find((item) => item.source === source)?.color ?? "#ffcc66";
-					const packed = Number.parseInt(
-						color.slice(5, 7) + color.slice(3, 5) + color.slice(1, 3),
-						16,
-					);
-					await this.engine.highlight(source, this.colors, this.highlight, signal, packed);
-				}
+				const pack = (color: string) =>
+					Number.parseInt(color.slice(5, 7) + color.slice(3, 5) + color.slice(1, 3), 16);
+				const layers = this.store.items
+					.filter((item) => item.source !== source)
+					.map((item) => ({ source: item.source, color: pack(item.color) }));
+				const focused = this.store.items.find((item) => item.source === source);
+				if (source) layers.push({ source, color: pack(focused?.color ?? "#ffcc66") });
+				const target =
+					this.activeHighlight === this.highlight ? this.highlightSpare : this.highlight;
+				if (layers.length) await this.engine.compose(layers, this.colors, target, signal);
 				if (ticket !== this.displayRevision || this.controller.signal.aborted) return;
+				await this.renderer.pause();
+				if (ticket !== this.displayRevision || signal.aborted) return;
 				this.renderer.setColors(
 					this.workspace.embedding as GPUBuffer,
-					source ? this.highlight : this.colors,
+					layers.length ? target : this.colors,
+					layers.length > 0,
 				);
+				this.activeHighlight = layers.length ? target : null;
 				await this.renderer.draw(true);
+				if (ticket !== this.displayRevision || signal.aborted) return;
+				this.lastDisplay = { status: "rendered", populationIds: this.store.items.map((p) => p.id) };
+				this.mapStatus.textContent = focused
+					? `Showing ${focused.name} · ${focused.analysis.count.toLocaleString()} cells`
+					: source
+						? "Showing the current selection"
+						: layers.length
+							? `Showing ${layers.length} populations`
+							: "All cells · ready";
 			})
 			.catch((e) => {
-				if (!signal.aborted) this.status(errorText(e));
+				if (!signal.aborted) {
+					this.lastDisplay = { status: "failed", populationIds: [], error: errorText(e) };
+					this.status(errorText(e));
+					this.mapStatus.textContent = "Display update failed";
+				}
 			});
+	}
+	private displayState() {
+		return {
+			...this.lastDisplay,
+			selectedId: this.selectedId ?? this.referenceFocus?.id ?? null,
+			layers: this.store.items.map((p) => ({
+				id: p.id,
+				name: p.name,
+				count: p.analysis.count,
+				plottableCount: p.analysis.plottableCount ?? p.analysis.count,
+				color: p.color,
+			})),
+			draftPresent: !!this.draft,
+			viewer: this.renderer.viewState(),
+		};
+	}
+	private async present(item: DemoPopulation, signal: AbortSignal, guard?: () => Promise<void>) {
+		this.select(item.id, true);
+		await this.highlightTail;
+		signal.throwIfAborted();
+		await guard?.();
+		signal.throwIfAborted();
+		if (this.selectedId === item.id && !this.drawing && !this.draftBusy && item.analysis.bounds)
+			await this.renderer.focus(item.analysis.bounds);
+		return this.displayState();
 	}
 	onColorsChanged() {
 		this.queueHighlight(
@@ -588,6 +651,11 @@ export class DemoPanel {
 		const args = object(input),
 			generation = this.generation;
 		if (name === "inspect_dataset") return this.context();
+		if (name === "inspect_view") {
+			await this.highlightTail;
+			signal.throwIfAborted();
+			return this.displayState();
+		}
 		if (name === "list_populations")
 			return {
 				revision: this.store.revision,
@@ -643,10 +711,17 @@ export class DemoPanel {
 				revision: this.store.revision,
 			};
 		}
-		if (name === "create_population") {
+		if (name === "create_population" || name === "combine_populations") {
 			this.store.checkRevision(args.expectedRevision);
 			const revision = this.store.revision;
-			let source = object(args.source) as unknown as SelectionSpec;
+			let source: SelectionSpec;
+			if (name === "combine_populations") {
+				if (!Array.isArray(args.ids) || args.ids.length < 2 || args.ids.length > 8)
+					throw new DemoToolError("invalid_union", "Choose 2–8 population ids to combine.");
+				source = unionSelections(
+					...args.ids.map((id) => resolvePopulation(id, this.store.items, this.references).source),
+				);
+			} else source = object(args.source) as unknown as SelectionSpec;
 			const within =
 				args.within == null
 					? null
@@ -657,7 +732,7 @@ export class DemoPanel {
 				this.workspace.channels.length,
 				this.workspace.populations.length,
 			);
-			const name = populationName(args.name);
+			const label = populationName(args.name);
 			const analysis = await this.analyzeSource(source, signal);
 			signal.throwIfAborted();
 			await guard?.();
@@ -671,7 +746,7 @@ export class DemoPanel {
 				);
 			const item = this.store.add(
 				{
-					name,
+					name: label,
 					source,
 					analysis,
 					actor: "agent",
@@ -685,12 +760,12 @@ export class DemoPanel {
 				revision,
 			);
 			this.renderList();
-			this.select(item.id, true);
-			this.drawOverlay();
+			const display = await this.present(item, signal, guard);
 			return {
 				...this.summary(item),
 				revision: this.store.revision,
 				focused: this.selectedId === item.id,
+				display,
 			};
 		}
 		if (name === "rename_population") {
@@ -722,7 +797,7 @@ export class DemoPanel {
 				const focused = this.selectedId === target.id && !this.drawing && !this.draftBusy;
 				if (focused && args.focus !== false && target.named.analysis.bounds)
 					await this.renderer.focus(target.named.analysis.bounds);
-				return { ...this.summary(target.named), focused };
+				return { ...this.summary(target.named), focused, display: this.displayState() };
 			}
 			const analysis = await this.analyzeSource(target.source, signal);
 			await guard?.();
@@ -750,7 +825,13 @@ export class DemoPanel {
 				)
 					await this.renderer.focus(analysis.bounds);
 			}
-			return { id: target.id, name: target.name, count: analysis.count, focused };
+			return {
+				id: target.id,
+				name: target.name,
+				count: analysis.count,
+				focused,
+				display: this.displayState(),
+			};
 		}
 		if (name === "set_marker") {
 			if (
@@ -765,6 +846,8 @@ export class DemoPanel {
 		throw new Error("Unknown tool");
 	}
 	private activity(event: AgentEvent) {
+		if (event.type === "tool-call")
+			this.mapStatus.textContent = `Agent working · ${event.name ?? event.text}`;
 		const list = this.el("demo-activity"),
 			item = document.createElement("li");
 		item.className = `activity-${event.type}`;
@@ -817,6 +900,11 @@ export class DemoPanel {
 		send.disabled = true;
 		this.asking = true;
 		try {
+			if (this.draftBusy && this.draftTask) {
+				this.status("Finishing the lasso before starting the agent…");
+				await this.draftTask;
+			}
+			if (this.draft?.analysis.count) this.saveDraft(true);
 			await this.agent.ask(
 				field.value,
 				this.context(),
@@ -940,8 +1028,10 @@ export class DemoPanel {
 		await this.highlightTail;
 		this.renderer.onViewChange = null;
 		this.overlay.remove();
+		this.mapStatus.remove();
 		this.root.hidden = true;
 		await this.device.queue.onSubmittedWorkDone().catch(() => {});
 		this.highlight.destroy();
+		this.highlightSpare.destroy();
 	}
 }

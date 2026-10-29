@@ -1832,3 +1832,26 @@ Release-to-violin time in separate old/new replay checks was approximately 0.97 
 and 0.54 s on Calcifer. Drawing time was measured separately; cached embeddings/UI
 replays differed by three selected cells, so this is a local responsiveness
 comparison, not an exact cross-device benchmark. No Artemis GPU work was used.
+
+## 2026-10-29 — Visible action completion rather than permission loops
+
+The user's trace showed the model interpreting "one mutation per response" as a
+reason to stop a user request after creating an intermediate seed. Remove that
+ambiguous instruction: continue authorized reversible actions across tool rounds,
+using returned revisions. Add real GPU unions so combined populations do not
+require manual arithmetic or repeated go-aheads.
+
+The screenshot showed an active unsaved lasso. Asking the agent now preserves it
+as a named human-origin selection before taking a context snapshot, so it does not
+silently prevent agent display changes. Created results are displayed and framed
+before the tool returns; inspect_view exposes the actual completed-frame state.
+Named populations retain coloured overlays and a map-level status message.
+
+Selected overlays use an opaque foreground depth layer, preventing later grey
+context points from painting over them. Base colours remain untouched; composing
+uses an inactive buffer and only publishes completed output. Explicit overlays
+override display-only visibility filters. Native GPU tests cover deduplicated
+unions, combined intersections, source-colour preservation and a selected point
+under 65,536 later grey points. Normal navigation still renders resident points,
+not cached images. This changes exploratory display/selection behavior, not raw
+scientific gates or biological validation.

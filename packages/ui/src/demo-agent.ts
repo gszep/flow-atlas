@@ -21,6 +21,8 @@ type ResultBlock = {
 type Message = { role: "user" | "assistant"; content: (TextBlock | ToolBlock | ResultBlock)[] };
 
 const TOOLS = new Set([
+	"inspect_view",
+	"combine_populations",
 	"inspect_dataset",
 	"list_populations",
 	"inspect_population",
