@@ -1866,3 +1866,23 @@ with nonzero failure propagation and elapsed-time reporting. A five-minute step
 and ten-minute job bound cover runner/setup stalls; superseded runs on the same
 ref cancel. No tests, assertions or coverage are removed. This bounds the failure
 and preserves diagnostics; it is not a claim to have repaired the native library.
+
+## 2026-11-01 — GitHub-owned deployment identity
+
+The user requested that Grisha and Val can request changes through the shared bot,
+with completed updates pushed and deployed to flow.gszep.com. A verified repository
+inspection found only the CI test workflow and no repository Actions secrets,
+variables or environments. The operator's GCP login required reauthentication.
+
+Use GitHub OIDC with a dedicated Google Workload Identity Federation provider and
+deploy service account, not a stored user refresh token or downloaded service-account
+key. Admission is intended to bind the immutable repository/owner IDs, main ref and
+this exact workflow. The workflow only deploys a successful main run, consumes its
+tested UI artifact and restores the already-public pinned dataset with streaming
+hash verification. Existing runtime/build identities and server-side secrets remain.
+
+Main runs serialize so a new push cannot interrupt an in-flight deployment; PR runs
+still cancel superseded checks. Release acceptance verifies source SHA, served assets
+and runtime feature configuration at both URLs. Local tests cover corrupted cache,
+incorrect downloads, revision/asset mismatches and lost runtime configuration.
+Cloud IAM provisioning and the first real OIDC deployment are pending verification.

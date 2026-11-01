@@ -7,6 +7,40 @@ bar, trains on up to 100,000 events and projects the complete dataset with minim
 This is separate from the local agent studio described in `DELIVERY.md`.
 The interactive population/dictation demo is described in `INTERACTIVE_DEMO.md`.
 
+## Automatic GitHub deployment
+
+The `ci` workflow deploys successful `main` runs (including manual dispatch) through
+GitHub OIDC → Google Workload Identity Federation → a dedicated deploy service account.
+PR jobs have no deployment identity. Set repository variables `FLOW_GCP_WIF_PROVIDER`
+and `FLOW_GCP_DEPLOY_ACCOUNT` after provisioning the trust and IAM bindings; no service
+account key or user's refresh token belongs in GitHub secrets.
+
+One-time provisioning uses `deploy/setup-github-identity.sh` with the intended named
+`GCLOUD_CONFIGURATION`. If that operator login needs refreshing, use headless
+`gcloud auth login --no-launch-browser` in that configuration, send the authorization
+URL to the user, and wait for the code pasted from their phone. Then run:
+
+```sh
+GCLOUD_CONFIGURATION=<named-configuration> bash deploy/setup-github-identity.sh
+```
+
+The script grants the deployer the documented `run.sourceDeveloper` and
+`serviceusage.serviceUsageConsumer` project roles, and `iam.serviceAccountUser` on
+the existing FlowAtlas runtime/build identities. The provider admits only this
+repository's immutable repository/owner IDs, `main` ref and exact CI workflow.
+The provider/account resource names are nonsecret GitHub variables. It creates no keys.
+
+Deployment consumes the exact UI artifact from the passing test job. The pinned,
+already-public publication files are restored from a manifest-keyed cache or fetched
+from the existing publication URL, with size/SHA verification before staging. Nothing
+is read from an operator's private oracle directory on GitHub runners. Both the Cloud
+Run URL and `flow.gszep.com` must serve the expected revision and matching asset hashes.
+Existing runtime Secret Manager references remain server-side and are not replaced.
+
+Main workflow runs are serialized rather than cancelled mid-deployment. PR checks
+remain cancellable, and existing process/job timeouts remain in place. Provisioning
+and the first real Actions deployment must be verified before this is claimed live.
+
 ## Publication boundary
 
 - Publish only the built `packages/ui/dist` assets and release metadata through
@@ -119,7 +153,8 @@ acceptance condition from a successful Cloud Run deployment.
 Before publishing, run the affected UI build/typecheck, scoped checks and visual
 QA of automatic loading, progress/error states, sampled-map controls and responsive layout and the unsupported
 WebGPU message. Confirm that the staged package contains only intended public files.
-Follow the normal branch/review/CI/merge flow; deploy the accepted source revision.
+Completed changes from the authorized collaborators are pushed to `main` after checks;
+GitHub Actions deploys the accepted revision. Follow that run through served acceptance.
 
 After deployment, verify the Cloud Run URL and the custom-domain HTTPS URL without
 disabling certificate verification. Check the served release identity and assets,
