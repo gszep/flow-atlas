@@ -5,3 +5,4 @@ dist/
 *.tsbuildinfo
 .flow-atlas/
 outputs/
+gha-creds-*.json

@@ -3,9 +3,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Never interrupt an in-flight production deployment; PR checks remain replaceable.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -54,3 +56,75 @@ jobs:
           # Bound nested software-renderer threads as well as Vitest workers.
           LP_NUM_THREADS: '1'
           NODE_OPTIONS: --max-old-space-size=2048
+      - name: Preserve the tested UI build for deployment
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: demo-ui-${{ github.sha }}
+          path: packages/ui/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: production
+      url: https://flow.gszep.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: demo-ui-${{ github.sha }}
+          path: packages/ui/dist
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/flowatlas-publication
+          key: publication-${{ hashFiles('deploy/publication-manifest.json') }}
+      - name: Verify or retrieve the pinned public companion
+        run: node deploy/fetch-publication.mjs "$RUNNER_TEMP/flowatlas-publication"
+      - name: Stage the exact tested revision
+        run: node deploy/prepare.mjs "$RUNNER_TEMP/flowatlas-release" --publication-root "$RUNNER_TEMP/flowatlas-publication" --revision "$GITHUB_SHA"
+      - name: Require provisioned keyless deployment identity
+        env:
+          WIF_PROVIDER: ${{ vars.FLOW_GCP_WIF_PROVIDER }}
+          DEPLOY_ACCOUNT: ${{ vars.FLOW_GCP_DEPLOY_ACCOUNT }}
+        run: |
+          test -n "$WIF_PROVIDER" && test -n "$DEPLOY_ACCOUNT" || {
+            echo '::error::Configure FLOW_GCP_WIF_PROVIDER and FLOW_GCP_DEPLOY_ACCOUNT after provisioning GCP federation.'
+            exit 1
+          }
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: ninth-iris-405514
+          workload_identity_provider: ${{ vars.FLOW_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.FLOW_GCP_DEPLOY_ACCOUNT }}
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@2028e2d7d30a78c6910e0632e48dd561b064884d # v3
+        with:
+          project_id: ninth-iris-405514
+          region: europe-west1
+          service: flow-atlas-demo
+          source: ${{ runner.temp }}/flowatlas-release
+          flags: >-
+            --port=8080 --memory=256Mi --cpu=1
+            --min-instances=0 --max-instances=1 --timeout=300
+            --service-account=flow-atlas-demo-runtime@ninth-iris-405514.iam.gserviceaccount.com
+            --build-service-account=projects/ninth-iris-405514/serviceAccounts/flow-atlas-demo-build@ninth-iris-405514.iam.gserviceaccount.com
+      - name: Verify the Cloud Run and public releases
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          node deploy/verify-release.mjs "$SERVICE_URL" "$GITHUB_SHA"
+          node deploy/verify-release.mjs https://flow.gszep.com "$GITHUB_SHA"
