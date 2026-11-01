@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fetchPublication } from "./fetch-publication.mjs";
+import { verifyPublicationArchive } from "./verify-publication-archive.mjs";
 import { verifyRelease } from "./verify-release.mjs";
 
 function entry(path, bytes) {
@@ -24,51 +24,44 @@ async function serve(handler) {
 	};
 }
 
-test("publication restore verifies the cache and atomically replaces corrupt payloads", async () => {
+test("publication archive verification accepts only the pinned bytes", async () => {
 	const root = await mkdtemp(join(tmpdir(), "flow-publication-ci-"));
 	const data = Buffer.from("published fixture bytes");
-	const manifest = { files: [entry("sample/a.fcs", data)] };
-	let requests = 0;
-	const server = await serve((_request, response) => {
-		requests++;
-		response.end(data);
-	});
+	const archive = join(root, "companion.tar.gz");
+	const expected = entry("companion.tar.gz", data);
 	try {
-		assert.deepEqual(await fetchPublication(manifest, root, server.url), {
-			files: 1,
-			downloaded: 1,
+		await writeFile(archive, data);
+		assert.deepEqual(await verifyPublicationArchive(archive, expected), {
+			verifiedBytes: data.length,
+			sha256: expected.sha256,
 		});
-		assert.deepEqual(await readFile(join(root, "sample/a.fcs")), data);
-		assert.deepEqual(await fetchPublication(manifest, root, server.url), {
-			files: 1,
-			downloaded: 0,
-		});
-		assert.equal(requests, 1);
-		await writeFile(join(root, "sample/a.fcs"), "bad");
-		assert.equal((await fetchPublication(manifest, root, server.url)).downloaded, 1);
-		assert.equal(requests, 2);
+		await writeFile(archive, Buffer.alloc(data.length, 65));
+		await assert.rejects(verifyPublicationArchive(archive, expected), /hash mismatch/);
+		await writeFile(archive, "bad");
+		await assert.rejects(verifyPublicationArchive(archive, expected), /size\/type mismatch/);
 	} finally {
-		await server.close();
 		await rm(root, { recursive: true, force: true });
 	}
 });
 
-test("publication restore rejects traversal and incorrect remote bytes without publishing a file", async () => {
+test("publication archive verification rejects symlinks and invalid descriptors", async () => {
 	const root = await mkdtemp(join(tmpdir(), "flow-publication-invalid-"));
-	const expected = Buffer.from("expected");
-	const server = await serve((_request, response) => response.end("tampered"));
+	const data = Buffer.from("expected");
+	const archive = join(root, "archive");
+	const link = join(root, "link");
 	try {
+		await writeFile(archive, data);
+		await symlink(archive, link);
 		await assert.rejects(
-			fetchPublication({ files: [entry("../outside.fcs", expected)] }, root, server.url),
-			/manifest/,
+			verifyPublicationArchive(link, entry("archive", data)),
+			/size\/type mismatch/,
 		);
 		await assert.rejects(
-			fetchPublication({ files: [entry("sample.fcs", expected)] }, root, server.url),
-			/mismatch/,
+			verifyPublicationArchive(archive, { bytes: -1, sha256: "bad" }),
+			/descriptor/,
 		);
-		assert.deepEqual(await readdir(root), []);
+		assert.deepEqual(await readFile(archive), data);
 	} finally {
-		await server.close();
 		await rm(root, { recursive: true, force: true });
 	}
 });

@@ -87,12 +87,26 @@ jobs:
         with:
           name: demo-ui-${{ github.sha }}
           path: packages/ui/dist
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - id: publication-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/flowatlas-publication
-          key: publication-${{ hashFiles('deploy/publication-manifest.json') }}
-      - name: Verify or retrieve the pinned public companion
-        run: node deploy/fetch-publication.mjs "$RUNNER_TEMP/flowatlas-publication"
+          key: publication-archive-${{ hashFiles('deploy/publication-manifest.json', 'deploy/publication-artifact.json') }}
+      - name: Restore the pinned companion from GitHub, not the live demo
+        if: steps.publication-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(node -p 'require("./deploy/publication-artifact.json").releaseTag')
+          asset=$(node -p 'require("./deploy/publication-artifact.json").asset')
+          for attempt in 1 2 3; do
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$RUNNER_TEMP" --clobber && break
+            test "$attempt" -lt 3 || exit 1
+            sleep "$((attempt * 2))"
+          done
+          node deploy/verify-publication-archive.mjs "$RUNNER_TEMP/$asset"
+          mkdir -p "$RUNNER_TEMP/flowatlas-publication"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/flowatlas-publication"
       - name: Stage the exact tested revision
         run: node deploy/prepare.mjs "$RUNNER_TEMP/flowatlas-release" --publication-root "$RUNNER_TEMP/flowatlas-publication" --revision "$GITHUB_SHA"
       - name: Require provisioned keyless deployment identity

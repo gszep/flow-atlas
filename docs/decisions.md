@@ -1886,3 +1886,17 @@ still cancel superseded checks. Release acceptance verifies source SHA, served a
 and runtime feature configuration at both URLs. Local tests cover corrupted cache,
 incorrect downloads, revision/asset mismatches and lost runtime configuration.
 Cloud IAM provisioning and the first real OIDC deployment are pending verification.
+
+## 2026-11-01 — Do not use the production demo as CI dataset storage
+
+The first main run passed tests but a parallel public-payload download received 500.
+Cloud Run logs verified termination at 293 MiB against the existing 256 MiB limit.
+The GitHub federation step had not run yet; this was not an OIDC failure.
+
+Stage the same 34 already-public payloads against the pinned manifest and publish
+one immutable GitHub release artifact for CI. Its full archive size/SHA are committed;
+verify the archive before extraction and each file again during normal release staging.
+This removes bulk CI data traffic from the live demo without raising its paid resource
+limits. The cache binds both manifest and archive descriptors. Small served-release
+checks still exercise the production domain. This is a CI input correction, not a
+claim to resolve every possible production memory-pressure cause.

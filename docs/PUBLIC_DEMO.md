@@ -31,8 +31,9 @@ repository's immutable repository/owner IDs, `main` ref and exact CI workflow.
 The provider/account resource names are nonsecret GitHub variables. It creates no keys.
 
 Deployment consumes the exact UI artifact from the passing test job. The pinned,
-already-public publication files are restored from a manifest-keyed cache or fetched
-from the existing publication URL, with size/SHA verification before staging. Nothing
+already-public publication files are restored from a manifest-keyed cache or a pinned
+GitHub release asset, with whole-archive size/SHA verification before extraction and
+per-file verification during staging. CI never bulk-downloads the live demo. Nothing
 is read from an operator's private oracle directory on GitHub runners. Both the Cloud
 Run URL and `flow.gszep.com` must serve the expected revision and matching asset hashes.
 Existing runtime Secret Manager references remain server-side and are not replaced.
