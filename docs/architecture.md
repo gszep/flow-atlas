@@ -1,8 +1,14 @@
 # Architecture
 
-## Principles
+This is the original architectural proposal, retained as historical design context,
+not a description of implemented capabilities or current delivery. For current
+boundaries and evidence, see [HANDOFF.md](HANDOFF.md), [DELIVERY.md](DELIVERY.md),
+and [PUBLIC_DEMO.md](PUBLIC_DEMO.md). In particular, the public browser demo serves
+an authorized companion dataset; it is not a local-only workflow.
 
-1. **Browser is the compute platform.** WebGPU compute shaders do every numeric step: compensation, transforms, gating, histograms, SOM training, EmbedSOM. Data never leaves the machine. No CPU fallback.
+## Principles (original proposal)
+
+1. **Browser is the compute platform.** The proposal uses WebGPU compute shaders for numeric steps: compensation, transforms, gating, histograms, SOM training, EmbedSOM. Local-only data was a design goal; no CPU compute fallback is intended.
 2. **One document, two clients.** A JSON workspace document (samples, channels, transforms, gate DAG, groups, embeddings, selections, colours) is the single source of truth. The UI and the MCP server apply the same typed operations to it and receive the same change events. Revision IDs make agent edits safe against concurrent human edits.
 3. **Agents get summaries, not blobs.** Tools return compact statistics/tables by default; large arrays only on explicit request and with size caps.
 4. **FlowJo parity is a test, not a feature.** Phase 1 reads `.wsp`; Phase 2 writes it. Parity harness compares per-gate counts against FlowJo/FlowAtlas.jl exports within tolerance.

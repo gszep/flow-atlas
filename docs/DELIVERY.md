@@ -1,8 +1,9 @@
 # Flow Atlas delivery and acceptance
 
 The explicitly authorized public browser presentation is documented separately in
-[`PUBLIC_DEMO.md`](PUBLIC_DEMO.md). It hosts static UI assets and synthetic example
-data, not the local studio's analysis API or private experiments.
+[`PUBLIC_DEMO.md`](PUBLIC_DEMO.md). It hosts static UI assets and the authorized
+publication companion dataset, not the local studio's analysis API or private
+experiments. See the publication boundary in that document.
 
 ## Applicable surface
 
