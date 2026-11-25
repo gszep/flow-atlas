@@ -15,6 +15,7 @@ import {
 } from "./publication.js";
 import { renderBatches } from "./render-budget.js";
 import { PointRenderer } from "./renderer.js";
+import { sampleVisible as isSampleVisible } from "./sample-filter.js";
 import {
 	computeEmbedding,
 	type LoadedWorkspace,
@@ -196,7 +197,8 @@ async function main() {
 	const popSelected = new Set<number>(),
 		groupSelected = new Set<string>();
 	let unlabelledSelected = true,
-		colorBy = "labels";
+		colorBy = "labels",
+		selectedSample: number | null = null;
 	const popColors: string[] = [],
 		groupColors = new Map<string, string>();
 	const channelRange = new Map<string, [number, number]>();
@@ -214,21 +216,16 @@ async function main() {
 			sel[Math.floor(p / 32)] = (sel[Math.floor(p / 32)] as number) | (1 << (p % 32));
 		const sampleVisible = new Uint32Array(Math.max(1, ws.samples.length));
 		ws.samples.forEach((sample, index) => {
-			if (
-				[...(ws?.conditions ?? []), ...(ws?.batches ?? [])].every((group) =>
-					groupSelected.has(group),
-				)
-			) {
-				sampleVisible[index] = 1;
-				return;
-			}
-			const condition = ws?.conditions.length
-				? sample.groups.some((group) => ws?.conditions.includes(group) && groupSelected.has(group))
-				: true;
-			const batch = ws?.batches.length
-				? sample.groups.some((group) => ws?.batches.includes(group) && groupSelected.has(group))
-				: true;
-			sampleVisible[index] = condition && batch ? 1 : 0;
+			sampleVisible[index] = isSampleVisible(
+				index,
+				selectedSample,
+				sample.groups,
+				ws?.conditions ?? [],
+				ws?.batches ?? [],
+				groupSelected,
+			)
+				? 1
+				: 0;
 		});
 		const popColor = Uint32Array.from(
 			ws.populations.map((_, index) => hexToRgba8(popColors[index] ?? DEFAULT_COLOR)),
@@ -331,6 +328,23 @@ async function main() {
 	}
 	function buildLegend() {
 		if (!ws) return;
+		const sampleFilter = $<HTMLSelectElement>("sample-filter");
+		sampleFilter.replaceChildren();
+		const allSamples = document.createElement("option");
+		allSamples.value = "all";
+		allSamples.textContent = "All samples";
+		sampleFilter.append(allSamples);
+		ws.samples.forEach((sample, index) => {
+			const option = document.createElement("option");
+			option.value = String(index);
+			option.textContent = `${sample.name} (${sample.count.toLocaleString()} events)`;
+			sampleFilter.append(option);
+		});
+		sampleFilter.value = selectedSample === null ? "all" : String(selectedSample);
+		sampleFilter.onchange = () => {
+			selectedSample = sampleFilter.value === "all" ? null : Number(sampleFilter.value);
+			scheduleRecolor();
+		};
 		const legend = $("legend");
 		legend.replaceChildren();
 		const counts = new Map<string, number>();
@@ -480,6 +494,7 @@ async function main() {
 			popColors.length = 0;
 			unlabelledSelected = true;
 			colorBy = "labels";
+			selectedSample = null;
 			const transport = {
 				baseUrl: document.baseURI,
 				signal: loadAbort.signal,

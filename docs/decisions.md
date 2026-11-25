@@ -4,6 +4,21 @@ Append-only. Each entry: what was decided, why, and what evidence it rests on. M
 **measured** (we ran it), **verified** (primary source read), or **unverified** (secondary source only).
 Earlier decisions in `HANDOFF.md` remain in force unless superseded here.
 
+## 2026-11-26 — Explicit sample display selection
+
+**Decision:** expose workspace sample selection as a display-only filter, intersected
+with the existing group/population visibility, without inferring patient or control
+identity from names. Keep lasso analysis semantics unchanged and disclose that it
+still includes all samples inside the outline. Disclose the companion's existing
+pre-compensated input, unverified control/cleanup history and bounded SOM training.
+The original dataset, source identities, event membership, embedding and human
+annotations are not changed. This is an exploratory slice, not sample-specific
+gating, full-event SOM training, automatic phenotype identification, or validation.
+
+**Evidence:** source layout and existing visibility/selection behavior are
+**verified** in the repository; browser usability and biological correctness are
+**unverified** until explicitly tested. Unit tests cover sample/group intersections.
+
 ## 2026-09-07 — Rendering: hand-rolled WebGPU point renderer
 
 Chosen over regl-scatterplot (WebGL2) and deck.gl WebGPU (experimental). Embedding, colour and

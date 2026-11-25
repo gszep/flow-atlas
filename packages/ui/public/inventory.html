@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Human cytometry data — FlowAtlas</title>
+	<style>
+		:root { color-scheme: dark; font: 16px/1.55 system-ui, sans-serif; background: #111923; color: #e7eef5; }
+		body { max-width: 48rem; margin: 0 auto; padding: 1.25rem; }
+		h1, h2 { line-height: 1.2; } h1 { font-size: 1.9rem; } h2 { margin-top: 2rem; font-size: 1.25rem; }
+		a { color: #9de1fa; } .summary { border-left: 4px solid #8fd3e7; padding: .1rem 1rem; background: #1b2b39; }
+		li { margin: .65rem 0; } small { color: #b7c8d6; } code { overflow-wrap: anywhere; }
+	</style>
+</head>
+<body>
+	<main>
+		<h1>Human cytometry data: first verified checks</h1>
+		<p><small>FlowAtlas · 26 November 2026 · A partial inventory, not an exhaustive survey</small></p>
+		<div class="summary"><p><strong>Bottom line:</strong> We found one open human dataset with a downloadable sample, a single-stain control and a workspace. The files open, but their gate/channel mismatch prevents a trustworthy end-to-end replay today. We cannot yet estimate the proportion of datasets available before versus after cleanup or compensation.</p></div>
+		<h2>What we inspected</h2>
+		<p>The first FlowRepository screen covered 19 records: 11 had human support, four were from a mixed-species study with the individual species unresolved, two had unknown species and two were nonhuman. This is not the full OMIP collection, and records or files are not counts of independent patients.</p>
+		<ul>
+			<li><strong>Human whole blood, 25 markers:</strong> The <a href="https://doi.org/10.5281/zenodo.21869988">open Zenodo deposit</a> supplied a sample with 181,661 events, one APC single-stain file and a workspace. The workspace names the sample and contains 56 gate definitions with reported counts. These are existing reference gates, not independently verified ground truth.</li>
+			<li><strong>Important compatibility gap:</strong> 51 of those 56 gates name at least one <code>Comp-</code> channel not present under that name in the sample's FCS channel list. The workspace contains compensation-matrix definitions, and the sample metadata says “APPLY COMPENSATION: TRUE”, but neither observation alone establishes the stored values or the correct matrix application. The binding and numerical context need verification before replaying the gates.</li>
+			<li><strong>Human myeloid data, <a href="https://flowrepository.org/id/FR-FCM-ZYGY">FR-FCM-ZYGY</a>:</strong> The repository listing advertises three biological samples, 18 FMO files, 18 stained compensation controls, one unstained control and a workspace. These are listing claims: the files and gate contents have not been retrieved or verified. Direct downloads redirected to login; anonymous archive download requires a CAPTCHA.</li>
+			<li><strong>Other candidates:</strong> Human OMIP-040 and OMIP-044 list compensation controls and other promising files; OMIP-023 lists two workspaces. File contents, exact processing and whether usable labels or matched controls are included remain unknown.</li>
+		</ul>
+		<h2>Processing-stage evidence</h2>
+		<p>The open whole-blood sample's processing state and anomaly-filtering history remain <strong>unknown</strong>; a compensation-related keyword is not proof of the values stored. The single-stain file contains a spillover keyword, but this does not establish that it is the correct control for the sample. No FMO file from that deposit was verified. None of these observations establishes pre/post-unmixing availability.</p>
+		<h2>What the current map can and cannot do</h2>
+		<p>The existing publication map projects all its input events and can display one workspace sample at a time. Its SOM training still uses a strided subset targeting 100,000 events. Its filters do not change lasso statistics, which include all samples in the outline. Sample names are not automatically patient identities. It does not yet provide validated automatic phenotypes, control-aware cleanup or a complete expert-reviewed gating pipeline.</p>
+		<h2>Next verification</h2>
+		<p>Establish the whole-blood sample's acquisition/compensation context and the workspace's channel mapping before evaluating gates. For FlowRepository, use a securely authenticated download route or a user-completed CAPTCHA and verify actual files; the repository's expired TLS certificate means its listing and checksums could not be independently authenticated. Keep expert-selected test datasets held out once identified.</p>
+		<p><a href="./">Return to the FlowAtlas map</a></p>
+	</main>
+</body>
+</html>

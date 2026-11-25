@@ -11,7 +11,11 @@
 <div id="app">
 	<aside id="sidebar" hidden aria-label="Map controls">
 		<h1>FlowAtlas</h1>
+		<p><a href="./inventory.html">Human data inventory</a></p>
 		<section id="controls">
+			<label>View sample <select id="sample-filter" aria-label="View sample"></select></label>
+			<p class="demo-note">Sample names come from the workspace; they do not establish patient identity. This filters the display only; lasso statistics still include all samples.</p>
+			<details><summary>Data and limitations</summary><p class="demo-note">The publication companion contains pre-compensated samples and reference gates. Controls and cleanup history are not verified here. All source events are projected, but SOM training uses a strided subset targeting 100,000 events. Clusters are not validated cell identities.</p></details>
 			<label>Colour by <select id="colour-by"></select></label>
 			<label>Marker size <input id="size" type="range" min="0.5" max="6" step="0.1" value="1.5" /></label>
 			<details><summary>Reference populations and samples</summary><p class="demo-note">Display filters only. Lasso statistics include all cells inside the outline.</p><div id="legend"></div></details>
@@ -25,6 +29,7 @@
 </div>
 <div id="loading-overlay">
 	<div class="loading-card">
+		<p><a href="./inventory.html">Read the human data inventory</a></p>
 		<p id="status" role="status" aria-live="polite" aria-atomic="true">Loading dataset…</p>
 		<progress id="download-progress" max="100" aria-label="Publication download progress"></progress>
 		<p id="download-detail"></p>
