@@ -94,9 +94,14 @@ it("GPU selections cover bounded windows, nested label words, missing values, po
 		upload(device, labels),
 		upload(device, colors),
 		createStorage(device, n * 4),
+		upload(
+			device,
+			Uint32Array.from({ length: n }, (_, i) => (i === tail ? 1 : i === 2 ? 65 : 0)),
+		),
 	];
 	try {
-		const [columnA, columnB, embedding, labelBuffer, source, target] = buffers as [
+		const [columnA, columnB, embedding, labelBuffer, source, target, sampleId] = buffers as [
+			GPUBuffer,
 			GPUBuffer,
 			GPUBuffer,
 			GPUBuffer,
@@ -111,10 +116,33 @@ it("GPU selections cover bounded windows, nested label words, missing values, po
 			channelBuffers: [columnA, columnB],
 			embedding,
 			labels: labelBuffer,
+			sampleId,
+			samples: Array.from({ length: 66 }, (_, i) => ({
+				name: String(i),
+				basename: String(i),
+				offset: 0,
+				count: 0,
+				sourceCount: 0,
+				sourceOffset: 0,
+				groups: [],
+				skippedGateCount: 0,
+				gateCounts: [],
+			})),
 			populations: Array.from({ length: 35 }, (_, i) => `Population ${i}`),
 		};
 		const engine = new SelectionEngine(device, ws, 128 * 1024 ** 2);
 		const reference: SelectionSpec = { kind: "reference", population: 33 };
+		const scoped = intersectSelections(reference, { kind: "samples", indices: [1] });
+		expect((await engine.analyze(scoped)).count).toBe(1);
+		expect((await engine.analyze({ kind: "samples", indices: [0, 1, 65] })).count).toBe(n);
+		for (const indices of [[], [-1], [66], [0.5], [NaN]])
+			await expect(engine.analyze({ kind: "samples", indices })).rejects.toThrow(
+				"Unknown sample index",
+			);
+		await engine.highlight(scoped, source, target);
+		const scopedColors = await readback(device, target, Uint32Array, n * 4);
+		expect(scopedColors[0]).toBe(0x80383838);
+		expect(scopedColors[tail]).toBe(0x8033aaff);
 		const analysis = await engine.analyze(reference);
 		expect(analysis.count).toBe(3);
 		expect(analysis.total).toBe(n);
@@ -209,6 +237,14 @@ it("GPU selections cover bounded windows, nested label words, missing values, po
 			],
 		};
 		expect((await engine.analyze(polygon)).count).toBe(5);
+		expect(
+			(await engine.analyze(intersectSelections(polygon, { kind: "samples", indices: [65] })))
+				.count,
+		).toBe(1);
+		expect((await bounded.analyze({ kind: "samples", indices: [65] })).count).toBe(1);
+		expect(
+			(await engine.analyze(unionSelections(scoped, { kind: "samples", indices: [65] }))).count,
+		).toBe(2);
 		const positive: SelectionSpec = { kind: "ranges", ranges: [{ channel: 0, min: 0, max: null }] };
 		const intersection = intersectSelections(polygon, reference, positive);
 		const subset = await engine.analyze(intersection);
@@ -249,6 +285,17 @@ it("GPU selections cover bounded windows, nested label words, missing values, po
 		expect([painted[0], painted[1], painted[2], painted[tail]]).toEqual([
 			0xfe0000ff, 0xfe0000ff, 0xfe00ff00, 0xfe00ff00,
 		]);
+		// A full-limit saved predicate must remain renderable when a display sample
+		// is chosen; the display scope must not append a ninth predicate.
+		const fullLimit = intersectSelections(
+			...Array.from({ length: 8 }, () => ({ kind: "all" as const })),
+		);
+		await engine.compose([{ source: fullLimit, color: 0x123456 }], source, target, undefined, 1);
+		const singleDisplay = await readback(device, target, Uint32Array);
+		expect([singleDisplay[0], singleDisplay[tail]]).toEqual([0x80383838, 0xfe123456]);
+		await expect(engine.compose([], source, target, undefined, 66)).rejects.toThrow(
+			"Invalid display layers",
+		);
 		expect(await readback(device, source, Uint32Array)).toEqual(colors);
 		expect((await bounded.analyze(polygon)).count).toBe(4);
 		await engine.highlight(reference, source, target);

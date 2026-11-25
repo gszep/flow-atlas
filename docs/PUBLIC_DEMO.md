@@ -8,8 +8,9 @@ This is separate from the local agent studio described in `DELIVERY.md`.
 The interactive population/dictation demo is described in `INTERACTIVE_DEMO.md`.
 The sample selector filters the map by the workspace sample index without inferring
 patient identity; group and population filters still apply. It does not alter source
-events or the embedding. Lasso statistics continue to include every sample inside
-the outline, even when the map is filtered. The interface identifies the companion
+events or the embedding. New lasso analyses capture the selected sample; saved
+selections retain their original sample scope. Group/population display filters do
+not constrain statistics. The interface identifies the companion
 as pre-compensated and does not claim that controls or cleanup history are verified.
 
 ## Automatic GitHub deployment

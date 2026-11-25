@@ -9,6 +9,7 @@ export type Point = { x: number; y: number };
 /** Exploratory selections in embedding/display space, never persisted raw-channel gates. */
 export type LeafSelectionSpec =
 	| { kind: "all" }
+	| { kind: "samples"; indices: number[] }
 	| { kind: "polygon"; points: Point[] }
 	| { kind: "reference"; population: number }
 	| { kind: "ranges"; ranges: Array<{ channel: number; min: number | null; max: number | null }> };
@@ -66,7 +67,15 @@ export interface SelectionAnalysis {
 }
 type Workspace = Pick<
 	LoadedWorkspace,
-	"n" | "channels" | "channelBuffers" | "embedding" | "labels" | "words" | "populations"
+	| "n"
+	| "channels"
+	| "channelBuffers"
+	| "embedding"
+	| "labels"
+	| "words"
+	| "populations"
+	| "sampleId"
+	| "samples"
 >;
 type Binding = { buffer: GPUBuffer; size: number; offset?: number };
 type Kernel = { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout; dynamic: boolean[] };
@@ -77,7 +86,12 @@ const finiteF32 = (value: number) => Number.isFinite(value) && Number.isFinite(M
 const abort = (signal?: AbortSignal) => signal?.throwIfAborted();
 
 /** Validate metadata only. Membership is evaluated exclusively on the GPU using stored F32 values. */
-export function validateSelectionSpec(spec: SelectionSpec, channels: number, populations: number) {
+export function validateSelectionSpec(
+	spec: SelectionSpec,
+	channels: number,
+	populations: number,
+	samples = 0,
+) {
 	if (spec.kind === "union") {
 		if (
 			!Array.isArray(spec.selections) ||
@@ -86,20 +100,29 @@ export function validateSelectionSpec(spec: SelectionSpec, channels: number, pop
 			spec.selections.some((part) => (part as SelectionSpec).kind === "union")
 		)
 			throw new Error("Union requires 2–8 non-union selections");
-		for (const part of spec.selections) validateSelectionSpec(part, channels, populations);
+		for (const part of spec.selections) validateSelectionSpec(part, channels, populations, samples);
 		unionSelections(spec);
 	} else if (spec.kind === "intersection") {
 		if (
 			!Array.isArray(spec.selections) ||
 			spec.selections.length < 2 ||
 			spec.selections.length > 8 ||
-			spec.selections.some((part) => !["all", "polygon", "reference", "ranges"].includes(part.kind))
+			spec.selections.some(
+				(part) => !["all", "samples", "polygon", "reference", "ranges"].includes(part.kind),
+			)
 		)
 			throw new Error("Intersection requires 2–8 leaf selections");
-		for (const part of spec.selections) validateSelectionSpec(part, channels, populations);
+		for (const part of spec.selections) validateSelectionSpec(part, channels, populations, samples);
 		intersectSelections(spec);
 	} else if (spec.kind === "all") return;
-	else if (spec.kind === "polygon") {
+	else if (spec.kind === "samples") {
+		if (
+			!Array.isArray(spec.indices) ||
+			spec.indices.length === 0 ||
+			spec.indices.some((id) => !Number.isInteger(id) || id < 0 || id >= samples)
+		)
+			throw new Error("Unknown sample index");
+	} else if (spec.kind === "polygon") {
 		if (
 			spec.points.length < 3 ||
 			spec.points.length > 128 ||
@@ -161,6 +184,8 @@ export class SelectionEngine {
 			channels.length !== channelBuffers.length ||
 			!Number.isFinite(bound) ||
 			bound < Math.max(1024, stride * 64) ||
+			Math.max(1024, Math.ceil(workspace.samples.length / 64) * 8) > bound ||
+			workspace.sampleId.size < n * 4 ||
 			n * 4 > device.limits.maxBufferSize ||
 			device.limits.minStorageBufferOffsetAlignment > 256
 		)
@@ -172,7 +197,11 @@ export class SelectionEngine {
 			[true, true, true, true, false, false],
 		);
 		this.distribution = this.kernel(distributionSource, [true, true, false], [true, true, false]);
-		this.highlighting = this.kernel(highlightSource, [true, true, false], [true, true, true]);
+		this.highlighting = this.kernel(
+			highlightSource,
+			[true, true, false, true],
+			[true, true, true, true],
+		);
 		this.combining = this.kernel(unionSource, [true, false, false], [true, true, false]);
 	}
 
@@ -259,7 +288,12 @@ export class SelectionEngine {
 		) => Promise<T>,
 	): Promise<T> {
 		abort(signal);
-		validateSelectionSpec(spec, this.workspace.channels.length, this.workspace.populations.length);
+		validateSelectionSpec(
+			spec,
+			this.workspace.channels.length,
+			this.workspace.populations.length,
+			this.workspace.samples.length,
+		);
 		if (
 			clauses(spec)
 				.flat()
@@ -277,7 +311,7 @@ export class SelectionEngine {
 			const mask = own(this.workspace.n * 4),
 				selected = own(4),
 				dummy = own(8),
-				polygon = own(1024);
+				polygon = own(Math.max(1024, Math.ceil(this.workspace.samples.length / 64) * 8));
 			const uniform = this.device.createBuffer({
 				size: 64,
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -311,6 +345,13 @@ export class SelectionEngine {
 				})),
 			);
 			for (const [index, { selection: part, range }] of passes.entries()) {
+				if (part.kind === "samples") {
+					const bits = new Uint32Array(
+						Math.max(2, Math.ceil(this.workspace.samples.length / 64) * 2),
+					);
+					for (const id of part.indices) bits[id >>> 5] = (bits[id >>> 5] ?? 0) | (1 << (id & 31));
+					this.device.queue.writeBuffer(polygon, 0, bits);
+				}
 				let bounds = [0, 0, 0, 0];
 				if (part.kind === "polygon") {
 					const points = new Float32Array(part.points.flatMap(({ x, y }) => [x, y]));
@@ -333,7 +374,9 @@ export class SelectionEngine {
 								? 1
 								: part.kind === "ranges"
 									? 2
-									: 3,
+									: part.kind === "samples"
+										? 4
+										: 3,
 						index > 0 ? 1 : 0,
 						index === passes.length - 1 ? 1 : 0,
 						(range?.min != null ? 1 : 0) | (range?.max != null ? 2 : 0),
@@ -354,9 +397,11 @@ export class SelectionEngine {
 								: { buffer: dummy, size: 4 },
 							range
 								? this.window(this.workspace.channelBuffers[range.channel] as GPUBuffer, chunk)
-								: { buffer: dummy, size: 4 },
+								: part.kind === "samples"
+									? this.window(this.workspace.sampleId, chunk)
+									: { buffer: dummy, size: 4 },
 							this.window(mask, chunk),
-							{ buffer: polygon, size: 1024 },
+							{ buffer: polygon, size: polygon.size },
 							{ buffer: selected, size: 4 },
 						],
 						chunk.count,
@@ -500,6 +545,7 @@ export class SelectionEngine {
 							this.window(mask, chunk),
 							this.window(sourceColors, chunk),
 							this.window(targetColors, chunk),
+							this.window(this.workspace.sampleId, chunk),
 						],
 						chunk.count,
 						signal,
@@ -513,12 +559,17 @@ export class SelectionEngine {
 		sourceColors: GPUBuffer,
 		targetColors: GPUBuffer,
 		signal?: AbortSignal,
+		displaySample: number | null = null,
 	): Promise<void> {
 		if (
 			sourceColors === targetColors ||
 			sourceColors.size < this.workspace.n * 4 ||
 			targetColors.size < this.workspace.n * 4 ||
 			layers.length > 33 ||
+			(displaySample !== null &&
+				(!Number.isInteger(displaySample) ||
+					displaySample < 0 ||
+					displaySample >= this.workspace.samples.length)) ||
 			layers.some((l) => !Number.isInteger(l.color) || l.color < 0 || l.color > 0xffffff)
 		)
 			return Promise.reject(new Error("Invalid display layers"));
@@ -539,6 +590,7 @@ export class SelectionEngine {
 							{ buffer: dummy, size: 4 },
 							this.window(sourceColors, chunk),
 							this.window(targetColors, chunk),
+							this.window(this.workspace.sampleId, chunk),
 						],
 						chunk.count,
 						signal,
@@ -550,11 +602,17 @@ export class SelectionEngine {
 							await this.dispatch(
 								this.highlighting,
 								uniform,
-								new Uint32Array([chunk.count, layer.color, 2, 0]),
+								new Uint32Array([
+									chunk.count,
+									layer.color,
+									2,
+									displaySample === null ? 0 : displaySample + 1,
+								]),
 								[
 									this.window(mask, chunk),
 									this.window(sourceColors, chunk),
 									this.window(targetColors, chunk),
+									this.window(this.workspace.sampleId, chunk),
 								],
 								chunk.count,
 								signal,

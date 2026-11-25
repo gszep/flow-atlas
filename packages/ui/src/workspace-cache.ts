@@ -139,6 +139,11 @@ export function validCacheMetadata(
 			sample.offset !== offset ||
 			sample.sourceOffset !== offset ||
 			!strings(sample.groups) ||
+			(sample.count === 0
+				? sample.skippedGateCount !== null
+				: !Number.isSafeInteger(sample.skippedGateCount) ||
+					(sample.skippedGateCount as number) < 0 ||
+					(sample.skippedGateCount as number) > 1024) ||
 			!Array.isArray(sample.gateCounts) ||
 			sample.gateCounts.length > 1024
 		)

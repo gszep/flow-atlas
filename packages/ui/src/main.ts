@@ -328,6 +328,12 @@ async function main() {
 	}
 	function buildLegend() {
 		if (!ws) return;
+		const omitted = ws.samples.reduce((sum, sample) => sum + (sample.skippedGateCount ?? 0), 0);
+		const unevaluated = ws.samples.filter((sample) => sample.skippedGateCount === null).length;
+		$("gate-coverage").textContent =
+			`${omitted.toLocaleString()} reference gates were not evaluated across the workspace` +
+			(unevaluated ? `; ${unevaluated} empty samples had no gate evaluation` : "") +
+			". Reference gates are not independently validated.";
 		const sampleFilter = $<HTMLSelectElement>("sample-filter");
 		sampleFilter.replaceChildren();
 		const allSamples = document.createElement("option");
@@ -343,6 +349,7 @@ async function main() {
 		sampleFilter.value = selectedSample === null ? "all" : String(selectedSample);
 		sampleFilter.onchange = () => {
 			selectedSample = sampleFilter.value === "all" ? null : Number(sampleFilter.value);
+			demo?.onSampleChanged();
 			scheduleRecolor();
 		};
 		const legend = $("legend");
@@ -670,6 +677,7 @@ async function main() {
 				colorBuf,
 				computeBinding,
 				cacheKey,
+				() => selectedSample,
 				async (channel, signal) => {
 					signal?.throwIfAborted();
 					const previous = colorBy,

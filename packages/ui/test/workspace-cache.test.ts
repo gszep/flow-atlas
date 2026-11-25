@@ -39,6 +39,7 @@ function metadata() {
 				sourceOffset: 0,
 				sourceCount: 2,
 				groups: [],
+				skippedGateCount: 0,
 				gateCounts: [],
 			},
 		],
@@ -74,6 +75,9 @@ it("does not accept a sampled or misbound map as the full dataset", () => {
 		basename: "wrong.fcs",
 	} as (typeof wrong.samples)[number];
 	expect(validCacheMetadata(wrong, manifest)).toBe(false);
+	const missingCoverage = metadata();
+	(missingCoverage.samples[0] as { skippedGateCount?: number }).skippedGateCount = undefined;
+	expect(validCacheMetadata(missingCoverage, manifest)).toBe(false);
 });
 it("rejects a corrupt computed buffer before GPU allocation", async () => {
 	const entries = new Map<string, unknown>();

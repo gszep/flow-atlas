@@ -4,6 +4,31 @@ Append-only. Each entry: what was decided, why, and what evidence it rests on. M
 **measured** (we ran it), **verified** (primary source read), or **unverified** (secondary source only).
 Earlier decisions in `HANDOFF.md` remain in force unless superseded here.
 
+## 2026-11-26 — Sample-scoped exploratory selections and explicit candidate pipeline
+
+**Decision:** new lasso selections and agent inspections/proposals capture the
+selected workspace sample as a GPU membership predicate. Saved selections retain
+their original scope; group/population display filters still do not constrain
+statistics. The scope and eligible-sample denominator are explicit; no patient
+identity is inferred. Sample display remains enforced when saved layers highlight
+cells. Workspace gate omissions are surfaced, including on cache restore; a skipped
+gate is never presented as a verified negative population.
+
+An experimental local host example connects one explicitly identified FCS input,
+operator-supplied matrix/mapping and Time hypothesis, all-event compensated export,
+and raw-space gate counts with receipts. It is not automatic pipeline calibration,
+a source of validated phenotypes, or permission to compensate uncertain data.
+Controls, FMO interpretation, clustering/metaclustering, patient-level evaluation,
+and independent FlowJo numerical parity remain open. See
+`docs/reference/explicit-pipeline.md`.
+
+**Measured:** one independently acquired sample traversed the first-party WebGPU
+host; candidate gate counts were assessed against source-reported counts under
+an explicitly experimental Time override. Dataset-specific evidence remains private.
+**Verified:** sample/matrix identity and metadata by source-file inspection.
+**Unverified:** event-level agreement, general Time semantics, cell phenotypes and
+all untested gates. No source files or human annotations are modified.
+
 ## 2026-11-26 — Explicit sample display selection
 
 **Decision:** expose workspace sample selection as a display-only filter, intersected

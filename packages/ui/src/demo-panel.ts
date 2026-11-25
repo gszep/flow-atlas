@@ -19,6 +19,7 @@ import {
 	unionSelections,
 	validateSelectionSpec,
 } from "./selection-engine.js";
+import { scopeToSample, selectionSampleTotal, selectionScope } from "./selection-scope.js";
 import { violinPlots } from "./violin-plots.js";
 import type { LoadedWorkspace } from "./workspace.js";
 
@@ -54,6 +55,7 @@ export class DemoPanel {
 	private readonly controller = new AbortController();
 	private operation = new AbortController();
 	private generation = 0;
+	private sampleRevision = 0;
 	private draftRevision = 0;
 	private draftBusy = false;
 	private draftTask: Promise<void> | null = null;
@@ -81,6 +83,7 @@ export class DemoPanel {
 		private readonly colors: GPUBuffer,
 		maxBinding: number,
 		private readonly datasetKey: string,
+		private readonly sampleScope: () => number | null,
 		private readonly setMarker: (channel: string, signal?: AbortSignal) => Promise<void>,
 		clearCache: () => Promise<void>,
 	) {
@@ -227,6 +230,18 @@ export class DemoPanel {
 	private status(text: string) {
 		this.el("demo-status").textContent = text;
 	}
+	private scope(source: SelectionSpec) {
+		return selectionScope(
+			source,
+			this.workspace.samples.map((sample) => sample.name),
+		);
+	}
+	onSampleChanged() {
+		this.sampleRevision++;
+		this.status(
+			"New analyses use the selected sample. Saved selections retain their original scope; other display filters do not limit statistics.",
+		);
+	}
 	private setLasso(enabled: boolean) {
 		this.lasso = enabled;
 		this.overlay.classList.toggle("drawing", enabled);
@@ -234,7 +249,7 @@ export class DemoPanel {
 		this.el("demo-lasso").setAttribute("aria-pressed", String(enabled));
 		this.status(
 			enabled
-				? "Draw around a population. All cells inside the embedding-space lasso will be analysed."
+				? "Draw around a population. The selected sample limits new lasso statistics; other display filters do not."
 				: "Pan and zoom the map.",
 		);
 	}
@@ -283,7 +298,9 @@ export class DemoPanel {
 					this.status("Draw a closed area containing at least three points.");
 					return;
 				}
-				this.draftTask = this.inspectDraft({ kind: "polygon", points: drawing.points });
+				this.draftTask = this.inspectDraft(
+					scopeToSample({ kind: "polygon", points: drawing.points }, this.sampleScope()),
+				);
 			},
 			options,
 		);
@@ -324,9 +341,18 @@ export class DemoPanel {
 				this.overlay.append(label);
 			}
 		};
-		for (const item of this.store.items)
-			if (item.source.kind === "polygon") add(item.source.points, item.color, item.name, item.id);
-		if (this.draft?.source.kind === "polygon") add(this.draft.source.points, "#ffcc66");
+		const polygon = (source: SelectionSpec) =>
+			source.kind === "polygon"
+				? source
+				: source.kind === "intersection"
+					? source.selections.find((part) => part.kind === "polygon")
+					: undefined;
+		for (const item of this.store.items) {
+			const shape = polygon(item.source);
+			if (shape?.kind === "polygon") add(shape.points, item.color, item.name, item.id);
+		}
+		const shape = this.draft && polygon(this.draft.source);
+		if (shape?.kind === "polygon") add(shape.points, "#ffcc66");
 		if (this.drawing) add(this.drawing.points, "#ffffff");
 	}
 	private async inspectDraft(source: SelectionSpec) {
@@ -344,7 +370,7 @@ export class DemoPanel {
 			const analysis = await this.engine.analyze(source, { signal });
 			if (draftRevision !== this.draftRevision || signal.aborted) return;
 			this.draft = { source, analysis };
-			this.showAnalysis("Current lasso", analysis, "#ffcc66");
+			this.showAnalysis("Current lasso", analysis, "#ffcc66", source);
 			(this.el("demo-save") as HTMLButtonElement).disabled = analysis.count === 0;
 			this.status(
 				`${analysis.count.toLocaleString()} cells selected. Inspect the distributions and give this population a name.`,
@@ -383,9 +409,14 @@ export class DemoPanel {
 		this.select(item.id);
 		this.status(`Saved ${item.name}. Ask the agent to compare or refine it.`);
 	}
-	private showAnalysis(name: string, analysis: SelectionAnalysis, color: string) {
+	private showAnalysis(
+		name: string,
+		analysis: SelectionAnalysis,
+		color: string,
+		source: SelectionSpec,
+	) {
 		this.el("demo-distribution-title").textContent =
-			`${name} · ${analysis.count.toLocaleString()} cells`;
+			`${name} · ${analysis.count.toLocaleString()} cells · ${this.scope(source)}`;
 		violinPlots(this.el("demo-violins"), analysis, color, this.workspace.originalChannelNames);
 	}
 	private select(id: string, fromAgent = false) {
@@ -400,7 +431,7 @@ export class DemoPanel {
 		const item = this.store.get(id);
 		this.referenceFocus = null;
 		this.selectedId = item.id;
-		this.showAnalysis(item.name, item.analysis, item.color);
+		this.showAnalysis(item.name, item.analysis, item.color, item.source);
 		this.drawOverlay();
 		this.renderList();
 		this.queueHighlight(item.source);
@@ -408,13 +439,18 @@ export class DemoPanel {
 	private restoreInspection() {
 		const item = this.store.items.find((population) => population.id === this.selectedId);
 		if (item) {
-			this.showAnalysis(item.name, item.analysis, item.color);
+			this.showAnalysis(item.name, item.analysis, item.color, item.source);
 			this.queueHighlight(item.source);
 		} else if (this.referenceFocus) {
-			this.showAnalysis(this.referenceFocus.name, this.referenceFocus.analysis, "#82b5ff");
+			this.showAnalysis(
+				this.referenceFocus.name,
+				this.referenceFocus.analysis,
+				"#82b5ff",
+				this.referenceFocus.source,
+			);
 			this.queueHighlight(this.referenceFocus.source);
 		} else if (this.draft) {
-			this.showAnalysis("Current lasso", this.draft.analysis, "#ffcc66");
+			this.showAnalysis("Current lasso", this.draft.analysis, "#ffcc66", this.draft.source);
 			this.queueHighlight(this.draft.source);
 		} else {
 			this.el("demo-distribution-title").textContent = "Channel distributions";
@@ -441,7 +477,8 @@ export class DemoPanel {
 				if (source) layers.push({ source, color: pack(focused?.color ?? "#ffcc66") });
 				const target =
 					this.activeHighlight === this.highlight ? this.highlightSpare : this.highlight;
-				if (layers.length) await this.engine.compose(layers, this.colors, target, signal);
+				if (layers.length)
+					await this.engine.compose(layers, this.colors, target, signal, this.sampleScope());
 				if (ticket !== this.displayRevision || this.controller.signal.aborted) return;
 				await this.renderer.pause();
 				if (ticket !== this.displayRevision || signal.aborted) return;
@@ -455,7 +492,7 @@ export class DemoPanel {
 				if (ticket !== this.displayRevision || signal.aborted) return;
 				this.lastDisplay = { status: "rendered", populationIds: this.store.items.map((p) => p.id) };
 				this.mapStatus.textContent = focused
-					? `Showing ${focused.name} · ${focused.analysis.count.toLocaleString()} cells`
+					? `${focused.name} · saved count ${focused.analysis.count.toLocaleString()} · ${this.scope(focused.source)} (display may be filtered)`
 					: source
 						? "Showing the current selection"
 						: layers.length
@@ -478,6 +515,8 @@ export class DemoPanel {
 				id: p.id,
 				name: p.name,
 				count: p.analysis.count,
+				countScope: this.scope(p.source),
+				countMeaning: "Saved selection scope, not necessarily the currently visible map.",
 				plottableCount: p.analysis.plottableCount ?? p.analysis.count,
 				color: p.color,
 			})),
@@ -517,7 +556,7 @@ export class DemoPanel {
 			row.onpointerenter = () => {
 				if (this.hoverTimer) clearTimeout(this.hoverTimer);
 				this.hoverTimer = setTimeout(() => {
-					this.showAnalysis(item.name, item.analysis, item.color);
+					this.showAnalysis(item.name, item.analysis, item.color, item.source);
 					this.queueHighlight(item.source);
 				}, 120);
 			};
@@ -532,6 +571,7 @@ export class DemoPanel {
 					: item.accepted
 						? "Agent suggestion · accepted"
 						: "Agent suggestion";
+			attribution.textContent += ` · ${this.scope(item.source)}`;
 			attribution.title = item.rationale;
 			if (item.source.kind === "reference")
 				attribution.textContent += ` · imported ${this.workspace.populations[item.source.population]}`;
@@ -595,6 +635,7 @@ export class DemoPanel {
 			actor: item.actor,
 			accepted: item.accepted,
 			count: item.analysis.count,
+			scope: this.scope(item.source),
 			refines: item.refines,
 			within: item.within ?? null,
 			rationale: item.rationale,
@@ -624,6 +665,16 @@ export class DemoPanel {
 			revision: this.store.revision,
 			datasetKey: this.datasetKey,
 			total: this.workspace.n,
+			activeSample:
+				this.sampleScope() === null
+					? null
+					: {
+							index: this.sampleScope(),
+							name: this.workspace.samples[this.sampleScope() as number]?.name,
+							count: this.workspace.samples[this.sampleScope() as number]?.count,
+						},
+			referenceCountScope:
+				"All samples; display group and population filters do not constrain analysis",
 			selectedId: this.selectedId ?? this.referenceFocus?.id ?? null,
 			embeddingBounds: this.workspace.bounds,
 			channels: this.workspace.channels.map((name, index) => ({
@@ -649,7 +700,16 @@ export class DemoPanel {
 		await guard?.();
 		signal.throwIfAborted();
 		const args = object(input),
-			generation = this.generation;
+			generation = this.generation,
+			sampleRevision = this.sampleRevision,
+			activeSample = this.sampleScope();
+		const assertSampleUnchanged = () => {
+			if (sampleRevision !== this.sampleRevision)
+				throw new DemoToolError(
+					"state_changed",
+					"The sample view changed; inspect the dataset again.",
+				);
+		};
 		if (name === "inspect_dataset") return this.context();
 		if (name === "inspect_view") {
 			await this.highlightTail;
@@ -668,25 +728,41 @@ export class DemoPanel {
 				args.within == null
 					? null
 					: resolvePopulation(args.within, this.store.items, this.references);
-			const source = within ? intersectSelections(within.source, target.source) : target.source;
+			const source = scopeToSample(
+				within ? intersectSelections(within.source, target.source) : target.source,
+				activeSample,
+			);
 			const analysis =
-				!within && target.named ? target.named.analysis : await this.analyzeSource(source, signal);
+				activeSample === null && !within && target.named
+					? target.named.analysis
+					: await this.analyzeSource(source, signal);
 			const base = within
-				? (target.named?.analysis ?? (await this.analyzeSource(target.source, signal)))
+				? activeSample === null && target.named
+					? target.named.analysis
+					: await this.analyzeSource(scopeToSample(target.source, activeSample), signal)
 				: analysis;
 			const parent = within
-				? (within.named?.analysis ?? (await this.analyzeSource(within.source, signal)))
+				? activeSample === null && within.named
+					? within.named.analysis
+					: await this.analyzeSource(scopeToSample(within.source, activeSample), signal)
 				: null;
 			signal.throwIfAborted();
 			await guard?.();
 			signal.throwIfAborted();
+			assertSampleUnchanged();
 			return {
 				id: target.id,
 				name: target.name,
 				actor: target.named?.actor ?? (target.reference ? "imported-reference" : "dataset"),
 				accepted: target.named?.accepted ?? false,
 				count: analysis.count,
-				total: analysis.total,
+				total: selectionSampleTotal(
+					source,
+					this.workspace.samples.map((sample) => sample.count),
+				),
+				totalMeaning:
+					"Events in eligible samples, before population selection; not a parent-gate denominator.",
+				scope: this.scope(source),
 				within: within?.id ?? null,
 				withinName: within?.name ?? null,
 				...(within
@@ -727,16 +803,19 @@ export class DemoPanel {
 					? null
 					: resolvePopulation(args.within, this.store.items, this.references);
 			if (within) source = intersectSelections(within.source, source);
+			source = scopeToSample(source, activeSample);
 			validateSelectionSpec(
 				source,
 				this.workspace.channels.length,
 				this.workspace.populations.length,
+				this.workspace.samples.length,
 			);
 			const label = populationName(args.name);
 			const analysis = await this.analyzeSource(source, signal);
 			signal.throwIfAborted();
 			await guard?.();
 			signal.throwIfAborted();
+			assertSampleUnchanged();
 			if (generation !== this.generation)
 				throw new Error("Demo reset or selection changed; inspect the dataset again");
 			if (!analysis.count)
@@ -760,7 +839,27 @@ export class DemoPanel {
 				revision,
 			);
 			this.renderList();
-			const display = await this.present(item, signal, guard);
+			let display: ReturnType<DemoPanel["displayState"]>;
+			try {
+				display = await this.present(item, signal, async () => {
+					await guard?.();
+					assertSampleUnchanged();
+				});
+				assertSampleUnchanged();
+			} catch (error) {
+				if (sampleRevision === this.sampleRevision || signal.aborted) throw error;
+				// The candidate was already saved. Do not delete it (the human may have
+				// interacted with it); report its original scope and the changed view.
+				return {
+					...this.summary(item),
+					revision: this.store.revision,
+					focused: false,
+					viewChanged: true,
+					message:
+						"Candidate saved with its original scope; the sample view changed before presentation.",
+					display: this.displayState(),
+				};
+			}
 			return {
 				...this.summary(item),
 				revision: this.store.revision,
@@ -794,28 +893,33 @@ export class DemoPanel {
 				signal.throwIfAborted();
 				await guard?.();
 				signal.throwIfAborted();
+				assertSampleUnchanged();
 				const focused = this.selectedId === target.id && !this.drawing && !this.draftBusy;
 				if (focused && args.focus !== false && target.named.analysis.bounds)
 					await this.renderer.focus(target.named.analysis.bounds);
+				assertSampleUnchanged();
 				return { ...this.summary(target.named), focused, display: this.displayState() };
 			}
-			const analysis = await this.analyzeSource(target.source, signal);
+			const source = scopeToSample(target.source, activeSample);
+			const analysis = await this.analyzeSource(source, signal);
 			await guard?.();
 			signal.throwIfAborted();
+			assertSampleUnchanged();
 			if (generation !== this.generation)
 				throw new DemoToolError("state_changed", "Demo changed; inspect_dataset again.");
 			const focused = !(this.draft || this.drawing || this.draftBusy);
 			if (focused) {
 				this.selectedId = null;
-				this.referenceFocus = { ...target, analysis };
-				this.showAnalysis(target.name, analysis, "#82b5ff");
+				this.referenceFocus = { ...target, source, analysis };
+				this.showAnalysis(target.name, analysis, "#82b5ff", source);
 				this.renderList();
 				this.drawOverlay();
-				this.queueHighlight(target.source);
+				this.queueHighlight(source);
 				await this.highlightTail;
 				signal.throwIfAborted();
 				await guard?.();
 				signal.throwIfAborted();
+				assertSampleUnchanged();
 				if (
 					this.referenceFocus?.id === target.id &&
 					!this.drawing &&
@@ -825,10 +929,12 @@ export class DemoPanel {
 				)
 					await this.renderer.focus(analysis.bounds);
 			}
+			assertSampleUnchanged();
 			return {
 				id: target.id,
 				name: target.name,
 				count: analysis.count,
+				scope: this.scope(source),
 				focused,
 				display: this.displayState(),
 			};

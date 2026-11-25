@@ -14,11 +14,12 @@
 		<p><a href="./inventory.html">Human data inventory</a></p>
 		<section id="controls">
 			<label>View sample <select id="sample-filter" aria-label="View sample"></select></label>
-			<p class="demo-note">Sample names come from the workspace; they do not establish patient identity. This filters the display only; lasso statistics still include all samples.</p>
+			<p class="demo-note">Sample names come from the workspace; they do not establish patient identity. New lasso and agent analyses use this sample. Saved selections retain their original scope; other display filters do not limit statistics.</p>
 			<details><summary>Data and limitations</summary><p class="demo-note">The publication companion contains pre-compensated samples and reference gates. Controls and cleanup history are not verified here. All source events are projected, but SOM training uses a strided subset targeting 100,000 events. Clusters are not validated cell identities.</p></details>
+			<p id="gate-coverage" class="demo-note" role="status"></p>
 			<label>Colour by <select id="colour-by"></select></label>
 			<label>Marker size <input id="size" type="range" min="0.5" max="6" step="0.1" value="1.5" /></label>
-			<details><summary>Reference populations and samples</summary><p class="demo-note">Display filters only. Lasso statistics include all cells inside the outline.</p><div id="legend"></div></details>
+			<details><summary>Reference populations and samples</summary><p class="demo-note">These group and population controls filter the display only; they do not limit statistics.</p><div id="legend"></div></details>
 		</section>
 	</aside>
 	<main id="map" aria-label="Publication event map" aria-busy="true">

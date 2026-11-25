@@ -31,6 +31,8 @@ export interface SampleInfo {
 	sourceCount: number;
 	sourceOffset: number;
 	groups: string[];
+	/** Number of workspace gates not evaluated, or null when this sample had no events. */
+	skippedGateCount: number | null;
 	gateCounts: Array<{
 		name: string;
 		count: number;
@@ -244,6 +246,7 @@ export async function loadWorkspace(
 				sourceCount,
 				sourceOffset,
 				groups: groups.filter((group) => group.sampleIds.includes(s.id)).map((group) => group.name),
+				skippedGateCount: null,
 				gateCounts: s.gates.map((gate) => ({
 					name: gate.name,
 					count: 0,
@@ -307,6 +310,7 @@ export async function loadWorkspace(
 			sourceCount,
 			sourceOffset,
 			groups: groups.filter((g) => g.sampleIds.includes(s.id)).map((g) => g.name),
+			skippedGateCount: r.skipped.length,
 			gateCounts: r.counts.map((c) => ({
 				name: c.gate.name,
 				count: c.count,
