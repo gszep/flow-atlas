@@ -1,6 +1,7 @@
 /* Audio transport formatting only, not a cytometry compute kernel.
  * Streaming box averaging is a modest anti-alias filter, not scientific DSP.
- * State is bounded to one 100 ms frame plus at most two in-flight port messages.
+ * Allow short UI stalls during map loading. At most eight 100 ms PCM messages
+ * (25,600 bytes) can wait for the main thread; fail rather than omit audio.
  */
 class DictationProcessor extends AudioWorkletProcessor {
 	constructor() {
@@ -18,12 +19,19 @@ class DictationProcessor extends AudioWorkletProcessor {
 				this.stopped = true;
 				if (this.weight > 0) this.output(this.sum / this.weight);
 				if (this.count > 0) this.emit();
-				this.port.postMessage({ type: "flushed" });
+				if (!this.overflowed) this.port.postMessage({ type: "flushed" });
 			}
 		};
 	}
 
 	emit() {
+		if (this.pending >= 8) {
+			this.stopped = true;
+			this.overflowed = true;
+			this.count = 0;
+			this.port.postMessage({ type: "overflow" });
+			return;
+		}
 		const buffer = this.frame.buffer.slice(0, this.count * 2);
 		this.port.postMessage({ type: "pcm", buffer }, [buffer]);
 		this.pending++;
@@ -34,13 +42,7 @@ class DictationProcessor extends AudioWorkletProcessor {
 		const clipped = Math.max(-1, Math.min(1, value));
 		this.frame.setInt16(this.count * 2, Math.round(clipped * (clipped < 0 ? 32768 : 32767)), true);
 		this.count++;
-		if (this.count === 1600) {
-			if (this.pending > 0) {
-				this.stopped = true;
-				this.port.postMessage({ type: "overflow" });
-				this.count = 0;
-			} else this.emit();
-		}
+		if (this.count === 1600) this.emit();
 	}
 
 	process(inputs) {

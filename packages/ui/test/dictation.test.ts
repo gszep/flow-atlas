@@ -338,6 +338,16 @@ describe("audio worklet PCM I/O", () => {
 		expect(messages[0]?.buffer?.byteLength).toBe(3200);
 		expect(new DataView(messages[0]?.buffer as ArrayBuffer).getInt16(0, true)).toBe(16384);
 		instance.process([[new Float32Array(4800)]]);
-		expect(messages.map((m) => m.type)).toEqual(["pcm", "overflow"]);
+		expect(messages.map((m) => m.type)).toEqual(["pcm", "pcm"]);
+		for (let i = 0; i < 7; i++) instance.process([[new Float32Array(4800)]]);
+		expect(messages.map((m) => m.type)).toEqual([...Array(8).fill("pcm"), "overflow"]);
+		instance.port.onmessage({ data: { type: "flush" } });
+		expect(messages).toHaveLength(9);
+	});
+	it("does not report a successful tail flush if its bounded queue is full", () => {
+		const { instance, messages } = processor(16000);
+		instance.process([[new Float32Array(8 * 1600 + 5)]]);
+		instance.port.onmessage({ data: { type: "flush" } });
+		expect(messages.map((m) => m.type)).toEqual([...Array(8).fill("pcm"), "overflow"]);
 	});
 });

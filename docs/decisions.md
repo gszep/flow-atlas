@@ -10,6 +10,8 @@ Earlier decisions in `HANDOFF.md` remain in force unless superseded here.
 
 **Measured:** synthetic tests exercise rare counts, ambiguous names, incomplete coverage, incorrect expected counts and non-scorable prose. **Unverified:** improved expert accuracy, physical-microphone quality and generalization to independent biological datasets. No model retraining or autonomous biological experimentation is implemented.
 
+**Measured follow-up:** a reviewed-count replay initially passed when one reference event had a changed denominator. A regression test now rejects that mismatch and a changed sample identity. A separate cold-map browser exercise with synthetic microphone input and a mocked speech provider stopped after one unacknowledged audio frame. A bounded eight-frame queue tolerated a brief stall in the candidate exercise; deliberate overflow and a full-queue tail flush still fail closed. No upstream speech service, privacy policy or rate limit changed.
+
 ## 2026-11-26 — Sample-scoped exploratory selections and explicit candidate pipeline
 
 **Decision:** new lasso selections and agent inspections/proposals capture the

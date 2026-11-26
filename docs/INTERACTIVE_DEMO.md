@@ -102,7 +102,9 @@ is present in the page, URL or frontend bundle.
 
 AudioWorklet converts mono microphone input to 16 kHz PCM16 in 100 ms frames. Input at other
 sample rates is resampled with bounded state. Audio starts only after the relay is ready;
-stopping flushes the tail, sends Finalize/CloseStream and waits briefly for final text.
+up to eight frames can await browser-thread acknowledgment during brief rendering stalls.
+Overflow stops recording rather than silently omitting part of the question or review.
+Stopping flushes the tail, sends Finalize/CloseStream and waits briefly for final text.
 Cancellation/reset stops tracks, nodes, context, socket and timers. The transcript is editable
 before the user submits it to the model.
 
