@@ -61,13 +61,36 @@ export function replayReview(record) {
 				(a.count === null || count(a.count)),
 		);
 	const candidate = workspaceQuestion(t.question, samples, references, active);
-	const failures = r.assertions.filter(
-		(a) =>
-			!candidate?.rows.some((row) => row.sampleIndex === a.sampleIndex && row.count === a.count),
+	const original = t.local?.rows;
+	valid(
+		Array.isArray(original) &&
+			original.length <= samples.length &&
+			original.every(
+				(row) =>
+					row &&
+					count(row.sampleIndex) &&
+					row.sampleIndex < samples.length &&
+					text(row.sample) &&
+					count(row.events) &&
+					(row.count === null || (count(row.count) && row.count <= row.events)),
+			) &&
+			new Set(original.map((row) => row.sampleIndex)).size === original.length,
 	);
+	const checked = r.judgment === "matches-evidence";
+	if (checked) valid(original.length === r.assertions.length);
+	const failures = r.assertions.filter((a) => {
+		const approved = original.find((row) => row.sampleIndex === a.sampleIndex);
+		valid(approved && (!checked || a.count === approved.count));
+		const observed = candidate?.rows.find((row) => row.sampleIndex === a.sampleIndex);
+		return (
+			!observed ||
+			observed.sample !== approved.sample ||
+			observed.count !== a.count ||
+			(checked && observed.events !== approved.events)
+		);
+	});
 	// A checked response covers every row; a correction checks only the named row(s).
-	const scopeMismatch =
-		r.judgment === "matches-evidence" && candidate?.rows.length !== r.assertions.length;
+	const scopeMismatch = checked && candidate?.rows.length !== r.assertions.length;
 	return {
 		status: failures.length || scopeMismatch ? "fail" : "pass",
 		assertions: r.assertions.length,

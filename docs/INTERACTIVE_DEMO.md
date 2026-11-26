@@ -25,7 +25,7 @@ For a measured count table, **Download as checked** makes its counts explicit ex
 node packages/ui/scripts/replay-review.mjs /private/path/to/review.json
 ```
 
-The runner executes the current metadata-question code against the saved input summary. It checks each asserted sample count and exits 0 on agreement, 1 on discrepancy, or 2 for a malformed/non-scorable case. It never contacts a model, processes event files, executes instructions from a review, or changes the checkout. Prose-only reviews and model interpretations are **not scored**. A passing replay does not test speech recognition, upstream GPU gating, compensation, or phenotype validity. A failed review is a case to investigate, not authority to change the model, gate, or source annotation.
+The runner executes the current metadata-question code against the saved input summary. A checked table must reproduce the sample identities, counts and all-event denominators. A targeted correction checks only its named sample and expected count. Exit codes are 0 for agreement, 1 for discrepancy, and 2 for a malformed/non-scorable case. No model call, event-file processing or checkout change occurs. Prose-only reviews and model interpretations are **not scored**. A passing replay does not test speech recognition, upstream GPU gating, compensation, or phenotype validity. A failed review is a case to investigate, not authority to change the model, gate, or source annotation.
 
 ## Distribution and state contract
 

@@ -101,4 +101,16 @@ describe("question → evidence → human review → offline replay", () => {
 			status: "not-scorable",
 		});
 	});
+	it("does not pass when the numerator stays one but the denominator or sample identity changes", () => {
+		const checked = reviewedExample(inspection(), "matches-evidence", "Synthetic reviewed table");
+		for (const change of [{ count: 10 }, { name: "different specimen" }]) {
+			const candidate = structuredClone(checked);
+			const row = candidate.inspection.replay?.samples[0];
+			if (!row) throw new Error("missing sample");
+			Object.assign(row, change);
+			// The question spans all samples: no active-sample validation masks a row comparison bug.
+			candidate.inspection.requestedView = { sampleIndex: null, name: "All samples" };
+			expect(replayReview(candidate)).toMatchObject({ status: "fail", mismatchedRows: [0] });
+		}
+	});
 });
