@@ -4,6 +4,12 @@ Append-only. Each entry: what was decided, why, and what evidence it rests on. M
 **measured** (we ran it), **verified** (primary source read), or **unverified** (secondary source only).
 Earlier decisions in `HANDOFF.md` remain in force unless superseded here.
 
+## 2026-11-26 — The map is the idle interface
+
+**Decision:** show the existing full-event EmbedSOM canvas and one microphone control. Questions, answers, workspace controls, evidence and review history are transient disclosures, not permanent sidebars. Tap to record; explicitly stop and ask to submit confirmed final speech. Edit, dismiss, interruption or unconfirmed completion must not submit. Long press and `/` provide a typing route. Sheet transitions respect reduced motion. No embedding, annotation or gate semantics change.
+
+**Measured:** in a candidate browser at 390×844 and 1280×800 the canvas occupied the viewport with one idle button. A synthetic microphone and mocked transcription delivered a two-tap count question and sample table; keyboard sample-scoped inspection also worked. Physical phone microphone quality was not tested.
+
 ## 2026-11-26 — Human verification is the improvement loop
 
 **Decision:** put dictation and the evidence for each answer before manual selection. Keep a reviewer’s correction separate from the model answer, reference annotations and measurements. Make explicitly reviewed metadata counts replayable against the next version, offline; never infer a human verdict or promote a candidate automatically. Files stay with the reviewer unless they choose to share them. Keep expert-held-out cases separate from development reviews.

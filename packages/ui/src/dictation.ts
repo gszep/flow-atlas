@@ -20,7 +20,9 @@ interface Session {
 	wake: Set<() => void>;
 	flush?: () => void;
 	finish?: () => void;
-	stop?: Promise<void>;
+	stop?: Promise<string | null>;
+	interim?: string;
+	acknowledged?: boolean;
 	finals: string[];
 	seen: Set<string>;
 }
@@ -122,6 +124,7 @@ export class Dictation {
 		}
 		if (!message || typeof message !== "object") return;
 		if (message.type === "Metadata") {
+			if (s.finish) s.acknowledged = true;
 			s.finish?.();
 			return;
 		}
@@ -133,6 +136,7 @@ export class Dictation {
 		const text = message.channel?.alternatives?.[0]?.transcript;
 		if (typeof text !== "string") return;
 		if (message.is_final === true) {
+			s.interim = "";
 			// Deepgram timing identifies a segment, including retransmitted final results.
 			const key =
 				Number.isFinite(message.start) && Number.isFinite(message.duration)
@@ -144,6 +148,7 @@ export class Dictation {
 			}
 			this.options.onText(s.finals.join(" "), "");
 		} else {
+			s.interim = text.trim();
 			this.options.onText(s.finals.join(" "), text);
 		}
 	}
@@ -261,21 +266,21 @@ export class Dictation {
 		}
 	}
 
-	async stop(): Promise<void> {
+	async stop(): Promise<string | null> {
 		const s = this.current;
-		if (!s) return;
+		if (!s) return null;
 		if (s.stop) return s.stop;
 		if (s.state !== "recording") {
 			this.cancel();
-			return;
+			return null;
 		}
 		this.state(s, "finishing");
-		if (!this.active(s)) return;
+		if (!this.active(s)) return null;
 		s.stop = this.finish(s);
 		return s.stop;
 	}
 
-	private async finish(s: Session): Promise<void> {
+	private async finish(s: Session): Promise<string | null> {
 		await new Promise<void>((resolve) => {
 			s.wake.add(resolve);
 			s.flush = () => {
@@ -285,7 +290,7 @@ export class Dictation {
 			this.timer(s, () => this.fail(s, "Microphone flush timed out."), 1000);
 			s.node?.port.postMessage({ type: "flush" });
 		});
-		if (!this.active(s)) return;
+		if (!this.active(s)) return null;
 		for (const timer of s.timers) clearTimeout(timer);
 		s.timers.clear();
 		await new Promise<void>((resolve) => {
@@ -296,9 +301,10 @@ export class Dictation {
 			if (this.send(s, JSON.stringify({ type: "Finalize" })))
 				this.send(s, JSON.stringify({ type: "CloseStream" }));
 		});
-		if (!this.active(s)) return;
+		if (!this.active(s)) return null;
 		this.cleanup(s);
 		this.options.onState("idle");
+		return s.acknowledged && !s.interim ? s.finals.join(" ").trim() || null : null;
 	}
 
 	cancel(): void {

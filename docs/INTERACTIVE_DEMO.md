@@ -2,7 +2,7 @@
 
 ## Walkthrough
 
-1. Open the publication map. In **Ask the data**, dictate or type “How many events are in each sample?” Stop dictation, edit if needed and press **Ask**. No lasso or provider login is required.
+1. Open the publication map. The idle view is the full canvas and one microphone button. Tap to record “How many events are in each sample?”, then tap **Stop & ask**. Only this explicit second tap can submit final speech. **Edit instead** keeps a draft; closing, timeout, cancellation or incomplete finalization never submits. Hold the microphone or press `/` to type, use workspace tools, or ask to “show map controls”. Press Escape to return to the map.
 2. Open **Workspace evidence** for the sample-by-sample numbers. **Count reference NAME** uses the selected scope; **Compare reference NAME** compares samples. Both require a unique imported reference name. Missing coverage is unknown, not a negative finding. These queries use loaded metadata and do not call the model.
 3. Ask an open-ended follow-up to use the configured agent. A response card separates the final answer from browser tool arguments, results and errors, including turns with no tool calls. Previews are bounded, not complete operation receipts.
 4. Open **Check or correct this answer**. Dictate or type a note; **Use note in follow-up** creates an editable question, not an automatic submission. To keep or replay an assessment, explicitly download the review JSON. Reviews are not automatically collected or used for training.
@@ -105,8 +105,7 @@ sample rates is resampled with bounded state. Audio starts only after the relay 
 up to eight frames can await browser-thread acknowledgment during brief rendering stalls.
 Overflow stops recording rather than silently omitting part of the question or review.
 Stopping flushes the tail, sends Finalize/CloseStream and waits briefly for final text.
-Cancellation/reset stops tracks, nodes, context, socket and timers. The transcript is editable
-before the user submits it to the model.
+Cancellation/reset stops tracks, nodes, context, socket and timers. The transcript can be edited instead of sent. Only an explicit **Stop & ask** submits a confirmed question. Review-note dictation never submits a question.
 
 Every upstream stream includes `store=false` and `mip_opt_out=true`. The former disables
 Kotoleaf meeting/transcript storage for FlowAtlas only; it does not assert that no processing

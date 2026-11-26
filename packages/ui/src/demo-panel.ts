@@ -42,6 +42,8 @@ export class DemoPanel {
 	private lifecycleBusy = false;
 	private readonly dictation: Dictation;
 	private speechBase = "";
+	private dockRevision = 0;
+	private dockSampleRevision = 0;
 	private speechTarget: HTMLTextAreaElement | null = null;
 	private modelName: string | null = null;
 	private lastInspection: Pick<Inspection, "question" | "requestedView" | "answer"> | null = null;
@@ -101,25 +103,32 @@ export class DemoPanel {
 		this.highlightSpare = createStorage(device, workspace.n * 4, undefined, "demo.highlight-spare");
 		this.mapStatus.className = "map-agent-status";
 		this.mapStatus.setAttribute("role", "status");
-		this.mapStatus.textContent = "Ask a question about the map";
-		this.renderer.canvas.parentElement?.append(this.mapStatus);
+		this.mapStatus.textContent = "Map ready";
 		this.references = referencePopulations(
 			workspace.populations,
 			workspace.populations.map((name) => referenceCoverage(workspace.samples, name)),
 		);
-		this.root.innerHTML = `<section class="demo-agent"><h2>Ask the data</h2>
-		<textarea id="demo-prompt" rows="2" maxlength="4000" placeholder="How many events are in each sample?" aria-label="Question about the data"></textarea>
-		<div class="demo-toolbar"><button id="demo-dictate" type="button" disabled>Dictate</button><button id="demo-send" type="button">Ask</button><button id="demo-stop" type="button">Stop</button></div>
-		<p class="demo-note">English / 日本語 · Edit your words before sending. Dictation uses Kotoleaf / Deepgram. Audio requires your permission.</p>
-		<p id="demo-status" role="status" aria-live="polite">No selection needed. Try “How many events are in each sample?”</p>
+		this.root.innerHTML = `<section id="voice-sheet" aria-label="Ask the map" inert aria-hidden="true">
+		<header><span id="sheet-label">Ask the map</span><button type="button" id="sheet-close" aria-label="Return to map">×</button></header>
+		<p id="demo-status" role="status" aria-live="polite"></p>
+		<textarea id="demo-prompt" rows="2" maxlength="4000" placeholder="Ask about this map…" aria-label="Question about the data"></textarea>
+		<div class="demo-toolbar"><button id="demo-send" type="button">Ask</button><button id="edit-voice" type="button">Edit instead</button><button id="demo-stop" type="button">Stop request</button></div>
 		<div id="demo-inspections" aria-label="Answers and evidence"></div>
-		<details><summary>Tool activity</summary><ol id="demo-activity" aria-label="Agent tool activity" aria-live="polite"></ol></details></section>
+		<details id="answer-history" hidden><summary>Earlier answers</summary><div id="older-inspections"></div></details>
+		<details id="demo-tools"><summary>Workspace tools</summary>
+		<div id="map-settings"></div>
+		<details><summary>Tool activity</summary><ol id="demo-activity" aria-label="Agent tool activity" aria-live="polite"></ol></details>
 		<div class="demo-toolbar"><button id="demo-pan" type="button" aria-pressed="true">Pan</button><button id="demo-lasso" type="button" aria-pressed="false">Lasso</button></div>
 		<div class="demo-name"><input id="demo-name" maxlength="80" placeholder="Name this population" aria-label="Population name"><button id="demo-save" type="button" disabled>Save</button></div>
 		<div id="demo-populations" aria-label="Named populations"></div>
-		<details open><summary id="demo-distribution-title">Channel distributions</summary><p class="demo-note">Display-transformed fluorescence. Independent channel scales; medians are histogram estimates.</p><div id="demo-violins" class="violin-grid"></div></details>
+		<details><summary id="demo-distribution-title">Channel distributions</summary><p class="demo-note">Display-transformed fluorescence. Independent channel scales; medians are histogram estimates.</p><div id="demo-violins" class="violin-grid"></div></details>
 		<details id="demo-connect"><summary>External agent connection</summary><p id="demo-connection-state">Connecting…</p><button id="demo-unlock" type="button">Reconnect</button><button id="demo-mcp" type="button" disabled>Copy MCP connection</button></details>
-		<details><summary>Demo data and reset</summary><button id="demo-reset" type="button">Reset demo</button><button id="demo-clear-cache" type="button">Clear cached data and reload</button></details>`;
+		<details><summary>Demo data and reset</summary><button id="demo-reset" type="button">Reset demo</button><button id="demo-clear-cache" type="button">Clear cached data and reload</button></details>
+		<p class="demo-note">Dictation uses Kotoleaf / Deepgram. Typing does not use the microphone.</p></details></section>
+		<button id="demo-dictate" type="button" aria-pressed="false" aria-controls="voice-sheet" aria-label="Record a question. Hold to type or open workspace tools." title="Record a question · hold to type ( / )"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5.5 10.5v1a6.5 6.5 0 0 0 13 0v-1M12 18v3.5M9 21.5h6"/></svg><span id="mic-label"></span></button>`;
+		const sidebar = document.getElementById("sidebar");
+		if (sidebar) this.el("map-settings").append(sidebar, this.mapStatus);
+		this.setDock("quiet");
 		this.root.hidden = false;
 		this.dictation = new Dictation({
 			getToken: () => this.agent.connection()?.token ?? null,
@@ -134,21 +143,41 @@ export class DemoPanel {
 				if (this.controller.signal.aborted) return;
 				const active = ["connecting", "recording", "finishing"].includes(state),
 					button = this.el("demo-dictate") as HTMLButtonElement;
-				button.textContent =
+				this.el("mic-label").textContent =
 					state === "recording"
-						? "Stop dictation"
+						? this.speechTarget === this.el("demo-prompt")
+							? "Stop & ask"
+							: "Stop note"
 						: state === "connecting"
 							? "Connecting mic…"
 							: state === "finishing"
 								? "Finishing…"
-								: "Dictate";
-				button.disabled = !this.speechConfigured || state === "connecting" || state === "finishing";
+								: "";
+				button.disabled = state === "finishing";
+				button.setAttribute(
+					"aria-label",
+					state === "recording"
+						? this.el("mic-label").textContent || "Stop"
+						: state === "connecting"
+							? "Cancel microphone connection"
+							: "Record a question. Hold to type or open workspace tools.",
+				);
 				button.setAttribute("aria-pressed", String(state === "recording"));
 				if (this.speechTarget) this.speechTarget.readOnly = active;
 				(this.el("demo-send") as HTMLButtonElement).disabled = this.asking || active;
-				if (message) this.status(message);
-				else if (state === "recording")
-					this.status("Listening in English / 日本語. Stop dictation to edit the transcript.");
+				if (message) {
+					this.setDock(this.speechTarget === this.el("demo-prompt") ? "compose" : "answer");
+					this.status(message);
+				} else if (state === "recording")
+					this.status(
+						this.speechTarget === this.el("demo-prompt")
+							? "Listening… Tap Stop & ask to send."
+							: "Listening to your review note…",
+					);
+				else if (state === "idle" && this.root.dataset.view === "listen") {
+					this.setDock("compose");
+					this.status("Draft only. Edit or ask when ready.");
+				}
 			},
 		});
 		this.overlay.id = "selection-overlay";
@@ -158,7 +187,10 @@ export class DemoPanel {
 		const bind = (id: string, event: string, callback: EventListener) =>
 			this.el(id).addEventListener(event, callback, { signal: this.controller.signal });
 		bind("demo-pan", "click", () => this.setLasso(false));
-		bind("demo-lasso", "click", () => this.setLasso(true));
+		bind("demo-lasso", "click", () => {
+			this.hideDock();
+			this.setLasso(true);
+		});
 		bind("demo-reset", "click", () => {
 			void this.reset().catch((error) => this.status(errorText(error)));
 		});
@@ -201,9 +233,7 @@ export class DemoPanel {
 		bind("demo-mcp", "click", () => {
 			void this.copyMcp().catch((error) => this.status(errorText(error)));
 		});
-		bind("demo-dictate", "click", () => {
-			void this.toggleDictation();
-		});
+		this.bindDock();
 		this.attachLasso();
 		window.addEventListener(
 			"pagehide",
@@ -221,7 +251,6 @@ export class DemoPanel {
 				this.modelName = config.model;
 				this.agentConfigured = config.agentConfigured;
 				this.speechConfigured = config.speechConfigured;
-				(this.el("demo-dictate") as HTMLButtonElement).disabled = !config.speechConfigured;
 				this.el("demo-connection-state").textContent = config.agentConfigured
 					? `Ready · ${config.model}`
 					: "The agent gateway is not configured yet. Lasso and statistics work locally.";
@@ -234,6 +263,120 @@ export class DemoPanel {
 	}
 	private el(id: string) {
 		return this.root.querySelector(`#${id}`) as HTMLElement;
+	}
+	private setDock(view: "quiet" | "listen" | "compose" | "answer" | "working") {
+		this.root.dataset.view = view;
+		const sheet = this.el("voice-sheet");
+		sheet.inert = view === "quiet";
+		sheet.setAttribute("aria-hidden", String(sheet.inert));
+		this.el("sheet-label").textContent = {
+			quiet: "Ask the map",
+			listen: "Voice · EN / 日本語",
+			compose: "Ask the map",
+			working: "Inspecting",
+			answer: "From the workspace",
+		}[view];
+		if (view === "quiet") (this.el("demo-tools") as HTMLDetailsElement).open = false;
+	}
+	private hideDock() {
+		this.dockRevision++;
+		this.dictation.cancel();
+		this.el("demo-dictate").focus({ preventScroll: true });
+		this.setDock("quiet");
+	}
+	private editDock() {
+		this.dockRevision++;
+		this.dictation.cancel();
+		this.setDock("compose");
+		this.status("");
+		this.el("demo-prompt").focus();
+	}
+	private bindDock() {
+		const mic = this.el("demo-dictate"),
+			signal = this.controller.signal;
+		let held = false,
+			timer: ReturnType<typeof setTimeout> | undefined;
+		const clear = () => clearTimeout(timer);
+		mic.addEventListener(
+			"pointerdown",
+			(event) => {
+				held = false;
+				clear();
+				if (event.button !== 0 || this.dictation.busy || this.asking) return;
+				timer = setTimeout(() => {
+					held = true;
+					this.editDock();
+				}, 520);
+			},
+			{ signal },
+		);
+		for (const name of ["pointerup", "pointercancel", "pointerleave"])
+			mic.addEventListener(name, clear, { signal });
+		signal.addEventListener("abort", clear, { once: true });
+		mic.addEventListener(
+			"contextmenu",
+			(event) => {
+				event.preventDefault();
+				clear();
+				held = true;
+				this.editDock();
+			},
+			{ signal },
+		);
+		mic.addEventListener(
+			"click",
+			() => {
+				if (held) {
+					held = false;
+					return;
+				}
+				if (this.asking) {
+					this.el("demo-stop").click();
+					return;
+				}
+				if (this.dictation.busy && !this.dictation.recording) {
+					this.hideDock();
+					return;
+				}
+				if (!this.speechConfigured) {
+					this.editDock();
+					this.status("Microphone unavailable. Type your question instead.");
+					return;
+				}
+				void this.toggleDictation();
+			},
+			{ signal },
+		);
+		this.el("sheet-close").addEventListener("click", () => this.hideDock(), { signal });
+		this.el("edit-voice").addEventListener("click", () => this.editDock(), { signal });
+		window.addEventListener(
+			"keydown",
+			(event) => {
+				if (
+					event.isComposing ||
+					event.defaultPrevented ||
+					event.altKey ||
+					event.ctrlKey ||
+					event.metaKey
+				)
+					return;
+				if (event.key === "Escape" && this.root.dataset.view !== "quiet") {
+					event.preventDefault();
+					this.hideDock();
+				} else if (
+					event.key === "/" &&
+					!this.asking &&
+					!(
+						event.target instanceof Element &&
+						event.target.closest("textarea,input,select,[contenteditable=true]")
+					)
+				) {
+					event.preventDefault();
+					this.editDock();
+				}
+			},
+			{ signal },
+		);
 	}
 	private status(text: string) {
 		this.el("demo-status").textContent = text;
@@ -1010,8 +1153,23 @@ export class DemoPanel {
 			active = this.sampleScope(),
 			sampleRevision = this.sampleRevision;
 		if (!question) return;
+		const uiRevision = this.dockRevision;
+		if (/^(?:open|show) (?:map controls|workspace tools)[.!?]?$/i.test(question)) {
+			this.setDock("compose");
+			(this.el("demo-tools") as HTMLDetailsElement).open = true;
+			field.value = "";
+			this.status("");
+			return;
+		}
+		if (/^(?:show|open) (?:my )?(?:answers|history)[.!?]?$/i.test(question)) {
+			this.setDock("answer");
+			(this.el("answer-history") as HTMLDetailsElement).open = true;
+			this.status(this.lastInspection ? "" : "No answers yet.");
+			field.value = "";
+			return;
+		}
 		const list = this.el("demo-inspections");
-		if (list.childElementCount >= 64) {
+		if (list.childElementCount + this.el("older-inspections").childElementCount >= 64) {
 			this.status(
 				"This session contains 64 answers. Download any reviews you want to keep before resetting.",
 			);
@@ -1052,6 +1210,8 @@ export class DemoPanel {
 			};
 		send.disabled = true;
 		this.asking = true;
+		this.setDock("working");
+		this.el("demo-dictate").setAttribute("aria-label", "Stop request");
 		try {
 			if (!local) {
 				if (!this.agent.connected) {
@@ -1090,6 +1250,12 @@ export class DemoPanel {
 						"The sample changed during this answer. See tool activity; repeat in a stable sample view before reviewing.",
 					);
 			}
+			if (list.firstElementChild) {
+				this.el("older-inspections").prepend(list.firstElementChild);
+				const history = this.el("answer-history") as HTMLDetailsElement;
+				history.hidden = false;
+				history.open = false;
+			}
 			list.prepend(
 				reviewCard(
 					turn,
@@ -1105,6 +1271,7 @@ export class DemoPanel {
 							return;
 						}
 						field.value = prompt;
+						this.setDock("compose");
 						field.focus();
 						this.status("Edit the follow-up, then ask when ready.");
 					},
@@ -1120,28 +1287,66 @@ export class DemoPanel {
 				requestedView: turn.requestedView,
 				answer: turn.answer.slice(0, 4000),
 			};
-			this.status(
-				local
-					? "Answered from the workspace. Open the evidence to check the count."
-					: "Answer ready. Check it against the tool evidence.",
-			);
+			if (uiRevision === this.dockRevision) {
+				this.setDock("answer");
+				this.el("voice-sheet").scrollTop = 0;
+				this.status("");
+			}
 		} catch (e) {
 			this.status(errorText(e));
 		} finally {
 			this.asking = false;
+			if (this.root.dataset.view === "working") this.setDock("compose");
+			this.el("demo-dictate").setAttribute(
+				"aria-label",
+				"Record a question. Hold to type or open workspace tools.",
+			);
 			send.disabled = this.dictation.busy;
 		}
 	}
 	private async toggleDictation(target = this.el("demo-prompt") as HTMLTextAreaElement) {
 		if (this.lifecycleBusy || this.asking) return;
 		if (this.dictation.busy && !this.dictation.recording) return;
+		const revision = this.dockRevision;
+		if (!this.dictation.busy && target === this.el("demo-prompt")) {
+			this.setDock("listen");
+			this.status("Connecting microphone…");
+			this.dockSampleRevision = this.sampleRevision;
+		}
 		if (!this.agent.connected) {
 			await this.connect();
-			if (!this.agent.connected) return;
+			if (revision !== this.dockRevision || this.controller.signal.aborted) return;
+			if (!this.agent.connected) {
+				this.editDock();
+				this.status("Microphone connection unavailable. Type a question instead.");
+				return;
+			}
 		}
 		try {
-			if (this.dictation.recording) await this.dictation.stop();
-			else {
+			if (this.dictation.recording) {
+				const original = this.speechTarget;
+				const final = await this.dictation.stop();
+				if (
+					revision !== this.dockRevision ||
+					this.controller.signal.aborted ||
+					original !== this.el("demo-prompt") ||
+					original !== target
+				)
+					return;
+				if (!final || this.sampleRevision !== this.dockSampleRevision) {
+					this.setDock("compose");
+					this.status("Check the draft and sample before asking. Nothing was sent.");
+					return;
+				}
+				const prompt = [this.speechBase, final].filter(Boolean).join(" ");
+				if (prompt.length > target.maxLength) {
+					this.setDock("compose");
+					this.status("Draft too long. Shorten before asking.");
+					return;
+				}
+				target.value = prompt;
+				await this.ask();
+			} else {
 				this.speechTarget = target;
 				this.speechBase = target.value.trim();
 				await this.dictation.start();
@@ -1177,6 +1382,7 @@ export class DemoPanel {
 	async reset() {
 		if (this.lifecycleBusy || this.controller.signal.aborted) return;
 		this.dictation.cancel();
+		this.dockRevision++;
 		this.speechBase = "";
 		this.lifecycleBusy = true;
 		this.root.inert = true;
@@ -1201,6 +1407,8 @@ export class DemoPanel {
 		(this.el("demo-mcp") as HTMLButtonElement).disabled = true;
 		this.el("demo-activity").replaceChildren();
 		this.el("demo-inspections").replaceChildren();
+		this.el("older-inspections").replaceChildren();
+		this.el("answer-history").hidden = true;
 		this.speechTarget = null;
 		this.lastInspection = null;
 		this.el("demo-violins").replaceChildren();
@@ -1234,6 +1442,7 @@ export class DemoPanel {
 			if (!this.controller.signal.aborted) this.root.inert = false;
 		}
 		if (this.agentConfigured && !this.controller.signal.aborted) await this.connect();
+		if (!this.controller.signal.aborted) this.hideDock();
 	}
 	async dispose() {
 		this.commands.stop();
@@ -1248,6 +1457,8 @@ export class DemoPanel {
 		this.renderer.onViewChange = null;
 		this.overlay.remove();
 		this.mapStatus.remove();
+		const sidebar = document.getElementById("sidebar");
+		if (sidebar) document.getElementById("controls-stash")?.append(sidebar);
 		this.root.hidden = true;
 		await this.device.queue.onSubmittedWorkDone().catch(() => {});
 		this.highlight.destroy();

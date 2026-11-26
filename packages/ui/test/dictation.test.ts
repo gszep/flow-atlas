@@ -201,7 +201,7 @@ describe("Dictation relay lifecycle", () => {
 			channel: { alternatives: [{ transcript: "final" }] },
 		});
 		socket.message({ type: "Metadata" });
-		await stop;
+		expect(await stop).toBe("final");
 		expect(text).toHaveBeenLastCalledWith("final", "");
 		expect(track.stop).toHaveBeenCalledOnce();
 		expect(Context.instances[0]?.close).toHaveBeenCalledOnce();
@@ -266,7 +266,7 @@ describe("Dictation relay lifecycle", () => {
 		worklet.message({ type: "flushed" });
 		await tick();
 		await vi.advanceTimersByTimeAsync(3000);
-		await stop;
+		expect(await stop).toBeNull();
 		expect(track.stop).toHaveBeenCalledOnce();
 		expect(vi.getTimerCount()).toBe(0);
 	});
@@ -284,6 +284,28 @@ describe("Dictation relay lifecycle", () => {
 		expect(Worklet.instances).toHaveLength(0);
 		expect(socket?.close).toHaveBeenCalledOnce();
 		expect(track.stop).toHaveBeenCalledOnce();
+	});
+	it("does not offer a partially transcribed or cancelled question for submission", async () => {
+		const { socket, worklet } = await started();
+		const result = (transcript: string, is_final: boolean) =>
+			socket.message({ type: "Results", is_final, channel: { alternatives: [{ transcript }] } });
+		result("Select sample", true);
+		result("two", false);
+		const finishing = client.stop();
+		worklet.message({ type: "flushed" });
+		await tick();
+		socket.message({ type: "Metadata" });
+		expect(await finishing).toBeNull();
+		await startedAgain();
+		const stopped = client.stop();
+		client.cancel();
+		expect(await stopped).toBeNull();
+		async function startedAgain() {
+			const start = client.start();
+			await tick();
+			Socket.instances.at(-1)?.message({ type: "Ready" });
+			await start;
+		}
 	});
 });
 
