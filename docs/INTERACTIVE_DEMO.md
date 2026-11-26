@@ -101,10 +101,13 @@ The backend attaches the private Worker Authorization header. No long-lived upst
 is present in the page, URL or frontend bundle.
 
 AudioWorklet converts mono microphone input to 16 kHz PCM16 in 100 ms frames. Input at other
-sample rates is resampled with bounded state. Audio starts only after the relay is ready;
-up to eight frames can await browser-thread acknowledgment during brief rendering stalls.
-Overflow stops recording rather than silently omitting part of the question or review.
-Stopping flushes the tail, sends Finalize/CloseStream and waits briefly for final text.
+sample rates is resampled with bounded state. Tapping requests the microphone immediately;
+local capture does not wait for guest authorization, a ticket, or the speech relay. Browser
+permission and device startup still apply. The microphone is not warmed or recorded while idle.
+Up to 80 frames (8 seconds) can wait in memory for delivery; another 8 may be in flight
+from the worklet. Audio is sent in order only after authenticated Ready, paced below the
+relay limit. Overflow stops recording rather than dropping the opening words. Stop flushes
+the tail and releases the mic before draining the queue and requesting final text.
 Cancellation/reset stops tracks, nodes, context, socket and timers. The transcript can be edited instead of sent. Only an explicit **Stop & ask** submits a confirmed question. Review-note dictation never submits a question.
 
 Every upstream stream includes `store=false` and `mip_opt_out=true`. The former disables

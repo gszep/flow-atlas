@@ -4,6 +4,12 @@ Append-only. Each entry: what was decided, why, and what evidence it rests on. M
 **measured** (we ran it), **verified** (primary source read), or **unverified** (secondary source only).
 Earlier decisions in `HANDOFF.md` remain in force unless superseded here.
 
+## 2026-11-27 — Capture speech before connecting transcription
+
+**Decision:** request the device in the tap handler; start the local worklet without waiting for the guest session, ticket, or WebSocket. Queue up to eight seconds of audio in memory, pace delivery after Ready, and release the mic on stop even when a short utterance is still queued. Cancel or overflow discards unsent frames. No speculative microphone access, paid stream preopening, recording to disk, or weakened relay limits.
+
+**Measured:** a mobile-sized Chromium test using a synthetic mic withheld relay readiness for at least 2.2 seconds. The device request occurred 1 ms after the tap, and the first 100 ms PCM frame arrived after 517 ms on that cold run. The user could finish before Ready; all nine captured frames later arrived intact and in order. **Unverified:** physical phone startup and recognition latency. A browser permission prompt is not an app-controlled delay.
+
 ## 2026-11-26 — The map is the idle interface
 
 **Decision:** show the existing full-event EmbedSOM canvas and one microphone control. Questions, answers, workspace controls, evidence and review history are transient disclosures, not permanent sidebars. Tap to record; explicitly stop and ask to submit confirmed final speech. Edit, dismiss, interruption or unconfirmed completion must not submit. Long press and `/` provide a typing route. Sheet transitions respect reduced motion. No embedding, annotation or gate semantics change.

@@ -1,7 +1,7 @@
 export type DictationState = "idle" | "connecting" | "recording" | "finishing" | "error";
 
 interface Options {
-	getToken: () => string | null;
+	getToken: () => string | null | Promise<string | null>;
 	onText: (finalText: string, interimText: string) => void;
 	onState: (state: DictationState, message?: string) => void;
 }
@@ -15,6 +15,10 @@ interface Session {
 	gain?: GainNode;
 	socket?: WebSocket;
 	ready: boolean;
+	pcm: ArrayBuffer[];
+	nextSend: number;
+	pumpScheduled: boolean;
+	drained?: () => void;
 	state: DictationState;
 	timers: Set<ReturnType<typeof setTimeout>>;
 	wake: Set<() => void>;
@@ -57,13 +61,7 @@ export class Dictation {
 		s.timers.add(id);
 	}
 
-	private cleanup(s: Session): void {
-		if (this.active(s)) this.current = undefined;
-		s.abort.abort();
-		for (const timer of s.timers) clearTimeout(timer);
-		for (const wake of s.wake) wake();
-		s.timers.clear();
-		s.wake.clear();
+	private releaseMic(s: Session): void {
 		if (s.node) {
 			s.node.port.onmessage = null;
 			s.node.onprocessorerror = null;
@@ -74,6 +72,22 @@ export class Dictation {
 		s.gain?.disconnect();
 		for (const track of s.stream?.getTracks() ?? []) track.stop();
 		if (s.context && s.context.state !== "closed") void s.context.close().catch(() => {});
+		delete s.node;
+		delete s.source;
+		delete s.gain;
+		delete s.stream;
+		delete s.context;
+	}
+
+	private cleanup(s: Session): void {
+		if (this.active(s)) this.current = undefined;
+		s.abort.abort();
+		for (const timer of s.timers) clearTimeout(timer);
+		for (const wake of s.wake) wake();
+		s.timers.clear();
+		s.wake.clear();
+		this.releaseMic(s);
+		s.pcm.length = 0;
 		if (s.socket) {
 			s.socket.onmessage = null;
 			s.socket.onerror = null;
@@ -153,6 +167,74 @@ export class Dictation {
 		}
 	}
 
+	/** Drain in capture order below the relay's 64 kB/s ceiling, even on catch-up. */
+	private pump(s: Session): void {
+		if (!this.active(s) || !s.ready || s.pumpScheduled) return;
+		if (!s.pcm.length) {
+			s.drained?.();
+			return;
+		}
+		const wait = s.nextSend - performance.now();
+		if (wait > 0) {
+			s.pumpScheduled = true;
+			this.timer(
+				s,
+				() => {
+					s.pumpScheduled = false;
+					this.pump(s);
+				},
+				Math.ceil(wait),
+			);
+			return;
+		}
+		const frame = s.pcm.shift();
+		if (!frame || !this.send(s, frame)) return;
+		s.nextSend = performance.now() + 65;
+		this.pump(s);
+	}
+
+	private async openRelay(s: Session, token: string) {
+		const response = await fetch("/api/demo/speech-ticket", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: "{}",
+			signal: s.abort.signal,
+		});
+		if (!this.active(s)) return;
+		if (!response.ok) throw new Error("ticket");
+		const ticket = await response.json();
+		if (!this.active(s)) return;
+		if (typeof ticket.ticket !== "string" || !ticket.ticket || !Number.isFinite(ticket.expiresAt))
+			throw new Error("ticket");
+		const url = new URL("/api/demo/speech", location.href);
+		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+		const socket = new WebSocket(url, ["flow-atlas.dictation", ticket.ticket]);
+		s.socket = socket;
+		await new Promise<void>((resolve) => {
+			s.wake.add(resolve);
+			socket.onmessage = (event) => {
+				if (!this.active(s)) return;
+				let ready = false;
+				try {
+					ready = JSON.parse(event.data).type === "Ready";
+				} catch {
+					/* Ignore malformed relay messages. */
+				}
+				if (ready && !s.ready) {
+					s.ready = true;
+					this.pump(s);
+					s.wake.delete(resolve);
+					resolve();
+				} else this.message(s, event.data);
+			};
+			socket.onerror = () => this.fail(s, "Speech connection failed.");
+			socket.onclose = () => {
+				if (s.finish) s.finish();
+				else this.fail(s, "Speech connection closed unexpectedly.");
+			};
+		});
+	}
+
 	async start(): Promise<void> {
 		this.cancel();
 		const token = this.options.getToken();
@@ -160,9 +242,13 @@ export class Dictation {
 			this.options.onState("error", "Dictation is not connected yet. Please try again.");
 			return;
 		}
+		const guest = Promise.resolve(token).catch(() => null);
 		const s: Session = {
 			abort: new AbortController(),
 			ready: false,
+			pcm: [],
+			nextSend: 0,
+			pumpScheduled: false,
 			state: "connecting",
 			timers: new Set(),
 			wake: new Set(),
@@ -172,90 +258,73 @@ export class Dictation {
 		this.current = s;
 		this.state(s, "connecting");
 		if (!this.active(s)) return;
-		this.timer(s, () => this.fail(s, "Dictation connection timed out."), 30_000);
+		this.timer(
+			s,
+			() => {
+				if (!s.ready) this.fail(s, "Dictation setup timed out. Nothing was submitted.");
+			},
+			30000,
+		);
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia({
-				audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-			});
-			if (!this.active(s)) {
-				for (const track of stream.getTracks()) track.stop();
-				return;
-			}
-			s.stream = stream;
-			const context = new AudioContext({ sampleRate: 16_000 });
+			// Both device acquisition and local worklet setup begin in the tap task.
+			const permission = navigator.mediaDevices
+				.getUserMedia({
+					audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+				})
+				.then((stream) => {
+					if (this.active(s)) s.stream = stream;
+					else for (const track of stream.getTracks()) track.stop();
+				});
+			// Request the device before constructing AudioContext: that constructor can
+			// synchronously initialize the OS audio backend on a cold browser.
+			void permission.catch(() => {}); // A failed context constructor must not orphan a rejection.
+			const context = new AudioContext({ sampleRate: 16000, latencyHint: "interactive" });
 			s.context = context;
-			await context.resume();
-			if (!this.active(s)) return;
-			const response = await fetch("/api/demo/speech-ticket", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-				body: "{}",
-				signal: s.abort.signal,
-			});
-			if (!this.active(s)) return;
-			if (!response.ok) throw new Error("ticket");
-			const ticket = await response.json();
-			if (!this.active(s)) return;
-			if (typeof ticket.ticket !== "string" || !ticket.ticket || !Number.isFinite(ticket.expiresAt))
-				throw new Error("ticket");
-			const url = new URL("/api/demo/speech", location.href);
-			url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-			const socket = new WebSocket(url, ["flow-atlas.dictation", ticket.ticket]);
-			s.socket = socket;
-			await new Promise<void>((resolve) => {
-				s.wake.add(resolve);
-				socket.onmessage = (event) => {
-					if (!this.active(s)) return;
-					let ready = false;
-					try {
-						ready = JSON.parse(event.data).type === "Ready";
-					} catch {
-						/* Ignore malformed relay messages. */
-					}
-					if (ready && !s.ready) {
-						s.ready = true;
-						s.wake.delete(resolve);
-						resolve();
-					} else this.message(s, event.data);
-				};
-				socket.onerror = () => this.fail(s, "Speech connection failed.");
-				socket.onclose = () => {
-					if (s.finish) s.finish();
-					else this.fail(s, "Speech connection closed unexpectedly.");
-				};
-			});
-			if (!this.active(s)) return;
-			await context.audioWorklet.addModule(new URL("./dictation-worklet.js", import.meta.url));
-			if (!this.active(s)) return;
+			await Promise.all([
+				permission,
+				context.resume(),
+				context.audioWorklet.addModule(new URL("./dictation-worklet.js", import.meta.url)),
+			]);
+			if (!this.active(s) || !s.stream) return;
 			const node = new AudioWorkletNode(context, "flow-atlas-dictation", { channelCount: 1 });
 			s.node = node;
 			node.onprocessorerror = () => this.fail(s, "Microphone processing failed.");
 			node.port.onmessage = (event) => {
 				if (!this.active(s)) return;
 				if (event.data.type === "pcm" && event.data.buffer instanceof ArrayBuffer) {
-					if (this.send(s, event.data.buffer)) node.port.postMessage({ type: "ack" });
+					if (s.pcm.length >= 80 || event.data.buffer.byteLength > 3200) {
+						this.fail(s, "Speech connection fell behind. Nothing was submitted.");
+						return;
+					}
+					s.pcm.push(event.data.buffer);
+					node.port.postMessage({ type: "ack" });
+					this.pump(s);
 				} else if (event.data.type === "flushed") s.flush?.();
 				else if (event.data.type === "overflow") this.fail(s, "Microphone processing fell behind.");
 			};
-			s.source = context.createMediaStreamSource(stream);
+			s.source = context.createMediaStreamSource(s.stream);
 			s.gain = context.createGain();
 			s.gain.gain.value = 0;
 			s.source.connect(node);
 			node.connect(s.gain);
 			s.gain.connect(context.destination);
-			for (const timer of s.timers) clearTimeout(timer);
-			s.timers.clear();
 			this.state(s, "recording");
 			if (!this.active(s)) return;
 			this.timer(
 				s,
 				() => {
-					void this.stop();
+					if (s.state === "recording") void this.stop();
 				},
-				60_000,
+				60000,
 			);
+			const credential = await guest;
+			if (!this.active(s)) return;
+			if (!credential) throw new Error("Session unavailable");
+			await this.openRelay(s, credential);
+			if (!this.active(s)) return;
 			const keepAlive = () => {
-				if (this.send(s, JSON.stringify({ type: "KeepAlive" }))) this.timer(s, keepAlive, 4000);
+				if (s.state === "recording" && this.send(s, JSON.stringify({ type: "KeepAlive" })))
+					this.timer(s, keepAlive, 4000);
 			};
 			this.timer(s, keepAlive, 4000);
 		} catch {
@@ -284,15 +353,41 @@ export class Dictation {
 		await new Promise<void>((resolve) => {
 			s.wake.add(resolve);
 			s.flush = () => {
+				delete s.flush;
 				s.wake.delete(resolve);
 				resolve();
 			};
-			this.timer(s, () => this.fail(s, "Microphone flush timed out."), 1000);
+			this.timer(
+				s,
+				() => {
+					if (s.flush) this.fail(s, "Microphone flush timed out.");
+				},
+				1000,
+			);
 			s.node?.port.postMessage({ type: "flush" });
 		});
 		if (!this.active(s)) return null;
-		for (const timer of s.timers) clearTimeout(timer);
-		s.timers.clear();
+		this.releaseMic(s);
+		// Stop capturing before waiting for authentication or queued PCM delivery.
+		if (!s.ready || s.pcm.length) {
+			await new Promise<void>((resolve) => {
+				s.wake.add(resolve);
+				s.drained = () => {
+					s.wake.delete(resolve);
+					delete s.drained;
+					resolve();
+				};
+				this.timer(
+					s,
+					() => {
+						if (s.drained) this.fail(s, "Speech delivery timed out. Nothing was submitted.");
+					},
+					15000,
+				);
+				this.pump(s);
+			});
+		}
+		if (!this.active(s)) return null;
 		await new Promise<void>((resolve) => {
 			s.wake.add(resolve);
 			s.finish = resolve;

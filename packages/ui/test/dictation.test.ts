@@ -59,9 +59,10 @@ class Worklet extends Node {
 }
 class Context {
 	static instances: Context[] = [];
+	static loadModule = () => Promise.resolve();
 	state = "running";
 	destination = {};
-	audioWorklet = { addModule: vi.fn(async () => {}) };
+	audioWorklet = { addModule: vi.fn(() => Context.loadModule()) };
 	resume = vi.fn(async () => {});
 	close = vi.fn(async () => {
 		this.state = "closed";
@@ -86,6 +87,7 @@ describe("Dictation relay lifecycle", () => {
 		Socket.instances = [];
 		Worklet.instances = [];
 		Context.instances = [];
+		Context.loadModule = () => Promise.resolve();
 		track.stop.mockClear();
 		permission = vi.fn(async () => stream);
 		fetcher = vi.fn(async () => ({
@@ -112,7 +114,8 @@ describe("Dictation relay lifecycle", () => {
 		await tick();
 		const socket = Socket.instances[0];
 		if (!socket) throw new Error("No socket");
-		expect(Worklet.instances).toHaveLength(0);
+		expect(Worklet.instances).toHaveLength(1);
+		expect(client.recording).toBe(true);
 		socket.message({ type: "Ready" });
 		await promise;
 		const worklet = Worklet.instances[0];
@@ -137,9 +140,9 @@ describe("Dictation relay lifecycle", () => {
 		expect(track.stop).toHaveBeenCalledOnce();
 		expect(fetcher).not.toHaveBeenCalled();
 		expect(state).toHaveBeenCalledTimes(callbacks);
-		expect(Context.instances).toHaveLength(0);
+		expect(Context.instances[0]?.close).toHaveBeenCalledOnce();
 	});
-	it("waits for Ready, authenticates only the ticket POST, and mutes monitoring", async () => {
+	it("records before Ready, authenticates only the ticket POST, and mutes monitoring", async () => {
 		const { socket } = await started();
 		expect(socket.url.href).toBe("wss://atlas.example/api/demo/speech");
 		expect(socket.protocols).toEqual(["flow-atlas.dictation", "single-use-ticket"]);
@@ -154,10 +157,66 @@ describe("Dictation relay lifecycle", () => {
 		expect(permission).toHaveBeenCalledWith({
 			audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
 		});
-		expect(Context.instances[0]?.options).toEqual({ sampleRate: 16000 });
+		expect(Context.instances[0]?.options).toMatchObject({ sampleRate: 16000 });
 		expect(Context.instances[0]?.createGain.mock.results[0]?.value.gain.value).toBe(0);
 		expect(client.recording).toBe(true);
 	});
+	it("captures the first words before guest auth and finishes a short tap before relay Ready", async () => {
+		const guest = deferred<string>();
+		client = new Dictation({ getToken: () => guest.promise, onText: text, onState: state });
+		const start = client.start();
+		expect(permission).toHaveBeenCalledOnce();
+		await tick();
+		expect(client.recording).toBe(true);
+		expect(fetcher).not.toHaveBeenCalled();
+		const node = Worklet.instances[0];
+		const frames = Array.from({ length: 20 }, (_, n) => new Uint8Array(3200).fill(n).buffer);
+		for (const buffer of frames) node?.message({ type: "pcm", buffer });
+		const stop = client.stop();
+		node?.message({ type: "flushed" });
+		await tick();
+		expect(track.stop).toHaveBeenCalledOnce();
+		await vi.advanceTimersByTimeAsync(2000);
+		guest.resolve("session-secret");
+		await tick();
+		const socket = Socket.instances[0];
+		expect(socket?.send).not.toHaveBeenCalled();
+		socket?.message({ type: "Ready" });
+		await start;
+		expect(socket?.send.mock.calls.map(([data]) => data)).toEqual([frames[0]]);
+		await vi.advanceTimersByTimeAsync(20 * 65);
+		expect(socket?.send.mock.calls.map(([data]) => data)).toEqual([
+			...frames,
+			'{"type":"Finalize"}',
+			'{"type":"CloseStream"}',
+		]);
+		socket?.message({
+			type: "Results",
+			is_final: true,
+			channel: { alternatives: [{ transcript: "short question" }] },
+		});
+		socket?.message({ type: "Metadata" });
+		expect(await stop).toBe("short question");
+		expect(vi.getTimerCount()).toBe(0);
+	});
+	it.each(["cancel", "overflow"])(
+		"discards unsent audio on %s; a late Ready cannot send it",
+		async (end) => {
+			const start = client.start();
+			await tick();
+			const socket = Socket.instances[0],
+				late = socket?.onmessage;
+			for (let i = 0; i < (end === "cancel" ? 1 : 81); i++)
+				Worklet.instances[0]?.message({ type: "pcm", buffer: new ArrayBuffer(3200) });
+			if (end === "cancel") client.cancel();
+			else expect(state).toHaveBeenLastCalledWith("error", expect.stringContaining("behind"));
+			late?.({ data: '{"type":"Ready"}' });
+			await start;
+			expect(socket?.send).not.toHaveBeenCalled();
+			expect(track.stop).toHaveBeenCalledOnce();
+			expect(vi.getTimerCount()).toBe(0);
+		},
+	);
 	it("replaces interim EN/JA text, accumulates finals, and deduplicates segment timing", async () => {
 		const { socket } = await started();
 		const result = (transcript: string, is_final: boolean, start = 0) =>
@@ -234,11 +293,9 @@ describe("Dictation relay lifecycle", () => {
 		expect(state).toHaveBeenCalledTimes(callbacks);
 	});
 	it("ignores worklet module completion after cancellation", async () => {
-		const start = client.start();
-		await tick();
 		const late = deferred<void>();
-		Context.instances[0]?.audioWorklet.addModule.mockReturnValue(late.promise);
-		Socket.instances[0]?.message({ type: "Ready" });
+		Context.loadModule = () => late.promise;
+		const start = client.start();
 		await tick();
 		client.cancel();
 		late.resolve();
@@ -281,7 +338,8 @@ describe("Dictation relay lifecycle", () => {
 		client.cancel();
 		await start;
 		lateCallback?.({ data: '{"type":"Ready"}' });
-		expect(Worklet.instances).toHaveLength(0);
+		expect(Worklet.instances).toHaveLength(1);
+		expect(Worklet.instances[0]?.port.close).toHaveBeenCalledOnce();
 		expect(socket?.close).toHaveBeenCalledOnce();
 		expect(track.stop).toHaveBeenCalledOnce();
 	});

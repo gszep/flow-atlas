@@ -47,7 +47,9 @@ export class DemoPanel {
 	private speechTarget: HTMLTextAreaElement | null = null;
 	private modelName: string | null = null;
 	private lastInspection: Pick<Inspection, "question" | "requestedView" | "answer"> | null = null;
-	private speechConfigured = false;
+	private speechConfigured: boolean | null = null;
+	private readonly configReady: Promise<void>;
+	private openingGuest: Promise<void> | null = null;
 	private agentConfigured = false;
 	private asking = false;
 	private readonly engine: SelectionEngine;
@@ -131,7 +133,12 @@ export class DemoPanel {
 		this.setDock("quiet");
 		this.root.hidden = false;
 		this.dictation = new Dictation({
-			getToken: () => this.agent.connection()?.token ?? null,
+			getToken: async () => {
+				await this.configReady;
+				if (!this.speechConfigured || this.controller.signal.aborted) return null;
+				await this.ensureGuest();
+				return this.agent.connection()?.token ?? null;
+			},
 			onText: (finalText, interimText) => {
 				if (!this.controller.signal.aborted && this.speechTarget)
 					this.speechTarget.value = [this.speechBase, finalText, interimText]
@@ -148,11 +155,9 @@ export class DemoPanel {
 						? this.speechTarget === this.el("demo-prompt")
 							? "Stop & ask"
 							: "Stop note"
-						: state === "connecting"
-							? "Connecting mic…"
-							: state === "finishing"
-								? "Finishing…"
-								: "";
+						: state === "finishing"
+							? "Finishing…"
+							: "";
 				button.disabled = state === "finishing";
 				button.setAttribute(
 					"aria-label",
@@ -244,7 +249,7 @@ export class DemoPanel {
 			},
 			{ signal: this.controller.signal },
 		);
-		void this.agent
+		this.configReady = this.agent
 			.config()
 			.then((config) => {
 				if (this.controller.signal.aborted) return;
@@ -254,9 +259,10 @@ export class DemoPanel {
 				this.el("demo-connection-state").textContent = config.agentConfigured
 					? `Ready · ${config.model}`
 					: "The agent gateway is not configured yet. Lasso and statistics work locally.";
-				if (config.agentConfigured) void this.connect();
+				if (config.agentConfigured || config.speechConfigured) void this.ensureGuest();
 			})
 			.catch(() => {
+				this.speechConfigured = false;
 				this.el("demo-connection-state").textContent =
 					"Agent connection unavailable. Lasso and statistics work locally.";
 			});
@@ -338,7 +344,7 @@ export class DemoPanel {
 					this.hideDock();
 					return;
 				}
-				if (!this.speechConfigured) {
+				if (this.speechConfigured === false) {
 					this.editDock();
 					this.status("Microphone unavailable. Type your question instead.");
 					return;
@@ -1122,8 +1128,29 @@ export class DemoPanel {
 		while (list.children.length > 60) list.firstElementChild?.remove();
 		list.scrollTop = list.scrollHeight;
 	}
+	/** Share the initial guest handshake without making the local mic/control inert. */
+	private async ensureGuest() {
+		if (this.agent.connected || this.lifecycleBusy || this.controller.signal.aborted) return;
+		this.openingGuest ??= this.agent
+			.connect()
+			.then(() => {
+				if (this.controller.signal.aborted) return;
+				this.el("demo-connection-state").textContent =
+					"Connected. Commands apply only to this demo session.";
+				(this.el("demo-mcp") as HTMLButtonElement).disabled = false;
+			})
+			.catch((e) => {
+				if (!this.controller.signal.aborted)
+					this.el("demo-connection-state").textContent = errorText(e);
+			})
+			.finally(() => {
+				this.openingGuest = null;
+			});
+		await this.openingGuest;
+	}
 	private async connect() {
 		if (this.lifecycleBusy || this.controller.signal.aborted) return;
+		if (this.openingGuest) return this.openingGuest;
 		this.dictation.cancel();
 		this.lifecycleBusy = true;
 		this.root.inert = true;
@@ -1278,7 +1305,7 @@ export class DemoPanel {
 					(target) => {
 						void this.toggleDictation(target);
 					},
-					this.speechConfigured,
+					this.speechConfigured === true,
 				),
 			);
 			if (field.value.trim() === question) field.value = "";
@@ -1310,17 +1337,8 @@ export class DemoPanel {
 		const revision = this.dockRevision;
 		if (!this.dictation.busy && target === this.el("demo-prompt")) {
 			this.setDock("listen");
-			this.status("Connecting microphone…");
+			this.status("");
 			this.dockSampleRevision = this.sampleRevision;
-		}
-		if (!this.agent.connected) {
-			await this.connect();
-			if (revision !== this.dockRevision || this.controller.signal.aborted) return;
-			if (!this.agent.connected) {
-				this.editDock();
-				this.status("Microphone connection unavailable. Type a question instead.");
-				return;
-			}
 		}
 		try {
 			if (this.dictation.recording) {
