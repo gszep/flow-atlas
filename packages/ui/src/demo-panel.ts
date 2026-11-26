@@ -4,12 +4,15 @@ import { DemoCommands } from "./demo-commands.js";
 import { type DemoPopulation, DemoPopulations, populationName } from "./demo-populations.js";
 import { DemoToolError } from "./demo-tool-errors.js";
 import { Dictation } from "./dictation.js";
+import { type Inspection, observeTurn } from "./inspection-review.js";
 import {
 	type ReferencePopulation,
 	referencePopulations,
 	resolvePopulation,
 } from "./population-lookup.js";
+import { referenceCoverage } from "./reference-coverage.js";
 import type { PointRenderer } from "./renderer.js";
+import { reviewCard } from "./review-card.js";
 import {
 	intersectSelections,
 	type Point,
@@ -22,6 +25,7 @@ import {
 import { scopeToSample, selectionSampleTotal, selectionScope } from "./selection-scope.js";
 import { violinPlots } from "./violin-plots.js";
 import type { LoadedWorkspace } from "./workspace.js";
+import { workspaceQuestion } from "./workspace-questions.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const object = (value: unknown): Record<string, unknown> => {
@@ -38,6 +42,9 @@ export class DemoPanel {
 	private lifecycleBusy = false;
 	private readonly dictation: Dictation;
 	private speechBase = "";
+	private speechTarget: HTMLTextAreaElement | null = null;
+	private modelName: string | null = null;
+	private lastInspection: Pick<Inspection, "question" | "requestedView" | "answer"> | null = null;
 	private speechConfigured = false;
 	private agentConfigured = false;
 	private asking = false;
@@ -94,40 +101,34 @@ export class DemoPanel {
 		this.highlightSpare = createStorage(device, workspace.n * 4, undefined, "demo.highlight-spare");
 		this.mapStatus.className = "map-agent-status";
 		this.mapStatus.setAttribute("role", "status");
-		this.mapStatus.textContent = "Lasso cells or ask the agent to explore";
+		this.mapStatus.textContent = "Ask a question about the map";
 		this.renderer.canvas.parentElement?.append(this.mapStatus);
 		this.references = referencePopulations(
 			workspace.populations,
-			workspace.populations.map((name) =>
-				workspace.samples.reduce(
-					(sum, sample) => sum + (sample.gateCounts.find((gate) => gate.name === name)?.count ?? 0),
-					0,
-				),
-			),
+			workspace.populations.map((name) => referenceCoverage(workspace.samples, name)),
 		);
-		this.root.innerHTML = `<div class="demo-toolbar"><button id="demo-pan" type="button" aria-pressed="true">Pan</button><button id="demo-lasso" type="button" aria-pressed="false">Lasso</button><button id="demo-reset" type="button">Reset demo</button></div>
-		<p id="demo-status" role="status" aria-live="polite">Lasso cells to inspect their expression pattern.</p>
+		this.root.innerHTML = `<section class="demo-agent"><h2>Ask the data</h2>
+		<textarea id="demo-prompt" rows="2" maxlength="4000" placeholder="How many events are in each sample?" aria-label="Question about the data"></textarea>
+		<div class="demo-toolbar"><button id="demo-dictate" type="button" disabled>Dictate</button><button id="demo-send" type="button">Ask</button><button id="demo-stop" type="button">Stop</button></div>
+		<p class="demo-note">English / 日本語 · Edit your words before sending. Dictation uses Kotoleaf / Deepgram. Audio requires your permission.</p>
+		<p id="demo-status" role="status" aria-live="polite">No selection needed. Try “How many events are in each sample?”</p>
+		<div id="demo-inspections" aria-label="Answers and evidence"></div>
+		<details><summary>Tool activity</summary><ol id="demo-activity" aria-label="Agent tool activity" aria-live="polite"></ol></details></section>
+		<div class="demo-toolbar"><button id="demo-pan" type="button" aria-pressed="true">Pan</button><button id="demo-lasso" type="button" aria-pressed="false">Lasso</button></div>
 		<div class="demo-name"><input id="demo-name" maxlength="80" placeholder="Name this population" aria-label="Population name"><button id="demo-save" type="button" disabled>Save</button></div>
 		<div id="demo-populations" aria-label="Named populations"></div>
 		<details open><summary id="demo-distribution-title">Channel distributions</summary><p class="demo-note">Display-transformed fluorescence. Independent channel scales; medians are histogram estimates.</p><div id="demo-violins" class="violin-grid"></div></details>
-		<section class="demo-agent"><h2>Explore with the agent</h2><textarea id="demo-prompt" rows="3" maxlength="4000" placeholder="Find other interesting populations and compare them with my selection." aria-label="Agent instruction"></textarea>
-		<div class="demo-toolbar"><button id="demo-send" type="button">Ask agent</button><button id="demo-stop" type="button">Stop</button><button id="demo-dictate" type="button" disabled>Dictate</button><span class="demo-note">EN / 日本語</span></div><p class="demo-note">Dictation uses Kotoleaf / Deepgram. Edit before sending. Kotoleaf transcript storage is disabled for this demo.</p>
 		<details id="demo-connect"><summary>External agent connection</summary><p id="demo-connection-state">Connecting…</p><button id="demo-unlock" type="button">Reconnect</button><button id="demo-mcp" type="button" disabled>Copy MCP connection</button></details>
-		<ol id="demo-activity" aria-label="Agent tool activity" aria-live="polite"></ol></section>
-		<details><summary>Demo data</summary><button id="demo-clear-cache" type="button">Clear cached data and reload</button></details>`;
+		<details><summary>Demo data and reset</summary><button id="demo-reset" type="button">Reset demo</button><button id="demo-clear-cache" type="button">Clear cached data and reload</button></details>`;
 		this.root.hidden = false;
 		this.dictation = new Dictation({
 			getToken: () => this.agent.connection()?.token ?? null,
 			onText: (finalText, interimText) => {
-				if (!this.controller.signal.aborted)
-					(this.el("demo-prompt") as HTMLTextAreaElement).value = [
-						this.speechBase,
-						finalText,
-						interimText,
-					]
+				if (!this.controller.signal.aborted && this.speechTarget)
+					this.speechTarget.value = [this.speechBase, finalText, interimText]
 						.filter(Boolean)
 						.join(" ")
-						.slice(0, 4000);
+						.slice(0, this.speechTarget.maxLength);
 			},
 			onState: (state, message) => {
 				if (this.controller.signal.aborted) return;
@@ -143,9 +144,8 @@ export class DemoPanel {
 								: "Dictate";
 				button.disabled = !this.speechConfigured || state === "connecting" || state === "finishing";
 				button.setAttribute("aria-pressed", String(state === "recording"));
-				(this.el("demo-prompt") as HTMLTextAreaElement).readOnly = active;
-				(this.el("demo-send") as HTMLButtonElement).disabled =
-					!this.agentConfigured || this.asking || active;
+				if (this.speechTarget) this.speechTarget.readOnly = active;
+				(this.el("demo-send") as HTMLButtonElement).disabled = this.asking || active;
 				if (message) this.status(message);
 				else if (state === "recording")
 					this.status("Listening in English / 日本語. Stop dictation to edit the transcript.");
@@ -180,6 +180,13 @@ export class DemoPanel {
 		bind("demo-send", "click", () => {
 			void this.ask();
 		});
+		bind("demo-prompt", "keydown", (event) => {
+			const key = event as KeyboardEvent;
+			if (!key.isComposing && key.key === "Enter" && (key.ctrlKey || key.metaKey)) {
+				key.preventDefault();
+				void this.ask();
+			}
+		});
 		bind("demo-stop", "click", () => {
 			this.dictation.cancel();
 			this.commands.stop();
@@ -210,13 +217,14 @@ export class DemoPanel {
 		void this.agent
 			.config()
 			.then((config) => {
+				if (this.controller.signal.aborted) return;
+				this.modelName = config.model;
 				this.agentConfigured = config.agentConfigured;
 				this.speechConfigured = config.speechConfigured;
 				(this.el("demo-dictate") as HTMLButtonElement).disabled = !config.speechConfigured;
 				this.el("demo-connection-state").textContent = config.agentConfigured
 					? `Ready · ${config.model}`
 					: "The agent gateway is not configured yet. Lasso and statistics work locally.";
-				(this.el("demo-send") as HTMLButtonElement).disabled = !config.agentConfigured;
 				if (config.agentConfigured) void this.connect();
 			})
 			.catch(() => {
@@ -674,7 +682,7 @@ export class DemoPanel {
 							count: this.workspace.samples[this.sampleScope() as number]?.count,
 						},
 			referenceCountScope:
-				"All samples; display group and population filters do not constrain analysis",
+				"All samples; null means incomplete or ambiguous reference coverage. Display group and population filters do not constrain analysis.",
 			selectedId: this.selectedId ?? this.referenceFocus?.id ?? null,
 			embeddingBounds: this.workspace.bounds,
 			channels: this.workspace.channels.map((name, index) => ({
@@ -995,37 +1003,138 @@ export class DemoPanel {
 		}
 	}
 	private async ask() {
-		if (this.lifecycleBusy || this.dictation.recording || this.asking) return;
+		if (this.lifecycleBusy || this.dictation.busy || this.asking) return;
 		const field = this.el("demo-prompt") as HTMLTextAreaElement,
 			send = this.el("demo-send") as HTMLButtonElement;
-		if (!field.value.trim()) return;
-		if (!this.agent.connected) {
-			await this.connect();
-			if (!this.agent.connected) return;
+		const question = field.value.trim(),
+			active = this.sampleScope(),
+			sampleRevision = this.sampleRevision;
+		if (!question) return;
+		const list = this.el("demo-inspections");
+		if (list.childElementCount >= 64) {
+			this.status(
+				"This session contains 64 answers. Download any reviews you want to keep before resetting.",
+			);
+			return;
 		}
+		const local = workspaceQuestion(
+			question,
+			this.workspace.samples,
+			this.workspace.populations,
+			active,
+		);
+		const turn: Inspection = {
+			question,
+			datasetKey: this.datasetKey,
+			requestedView: {
+				sampleIndex: active,
+				name:
+					active === null
+						? "All samples"
+						: (this.workspace.samples[active]?.name ?? "Unknown sample"),
+			},
+			answer: local?.answer ?? "",
+			local,
+			model: local ? null : this.modelName,
+			toolTrace: [],
+		};
+		if (local?.rows.length)
+			turn.replay = {
+				references: local.reference ? [local.reference] : [],
+				samples: this.workspace.samples.map(({ name, count, skippedGateCount, gateCounts }) => ({
+					name,
+					count,
+					skippedGateCount,
+					gateCounts: gateCounts
+						.filter((gate) => gate.name === local.reference)
+						.map(({ name, count, isLeaf }) => ({ name, count, isLeaf })),
+				})),
+			};
 		send.disabled = true;
 		this.asking = true;
 		try {
-			if (this.draftBusy && this.draftTask) {
-				this.status("Finishing the lasso before starting the agent…");
-				await this.draftTask;
+			if (!local) {
+				if (!this.agent.connected) {
+					if (!this.agentConfigured) {
+						this.status(
+							"Agent unavailable. You can still ask “How many events are in each sample?” or “Count reference <name>”.",
+						);
+						return;
+					}
+					await this.connect();
+					if (!this.agent.connected) {
+						this.status("Agent connection failed. Your question is still here.");
+						return;
+					}
+				}
+				if (this.draftBusy && this.draftTask) {
+					this.status("Finishing the lasso before starting the agent…");
+					await this.draftTask;
+				}
+				if (this.draft?.analysis.count) this.saveDraft(true);
+				if (sampleRevision !== this.sampleRevision)
+					throw new Error("Sample changed before submission. Check the view and ask again.");
+				this.status("Inspecting the workspace…");
+				await this.agent.ask(
+					question,
+					{ ...this.context(), previousInspection: this.lastInspection },
+					(name, input, signal) => this.invoke(name, input, signal),
+					(event) => {
+						observeTurn(turn, event);
+						this.activity(event);
+					},
+				);
+				if (!turn.answer || this.controller.signal.aborted) return;
+				if (sampleRevision !== this.sampleRevision)
+					throw new Error(
+						"The sample changed during this answer. See tool activity; repeat in a stable sample view before reviewing.",
+					);
 			}
-			if (this.draft?.analysis.count) this.saveDraft(true);
-			await this.agent.ask(
-				field.value,
-				this.context(),
-				(name, input, signal) => this.invoke(name, input, signal),
-				(event) => this.activity(event),
+			list.prepend(
+				reviewCard(
+					turn,
+					(prompt) => {
+						if (this.dictation.busy || field.value.trim()) {
+							this.status("Finish your current draft before using a review note.");
+							return;
+						}
+						if (prompt.length > field.maxLength) {
+							this.status(
+								"Question plus correction is too long. Shorten the note or enter a shorter follow-up.",
+							);
+							return;
+						}
+						field.value = prompt;
+						field.focus();
+						this.status("Edit the follow-up, then ask when ready.");
+					},
+					(target) => {
+						void this.toggleDictation(target);
+					},
+					this.speechConfigured,
+				),
+			);
+			if (field.value.trim() === question) field.value = "";
+			this.lastInspection = {
+				question: turn.question,
+				requestedView: turn.requestedView,
+				answer: turn.answer.slice(0, 4000),
+			};
+			this.status(
+				local
+					? "Answered from the workspace. Open the evidence to check the count."
+					: "Answer ready. Check it against the tool evidence.",
 			);
 		} catch (e) {
 			this.status(errorText(e));
 		} finally {
 			this.asking = false;
-			send.disabled = !this.agentConfigured || this.dictation.recording;
+			send.disabled = this.dictation.busy;
 		}
 	}
-	private async toggleDictation() {
-		if (this.lifecycleBusy) return;
+	private async toggleDictation(target = this.el("demo-prompt") as HTMLTextAreaElement) {
+		if (this.lifecycleBusy || this.asking) return;
+		if (this.dictation.busy && !this.dictation.recording) return;
 		if (!this.agent.connected) {
 			await this.connect();
 			if (!this.agent.connected) return;
@@ -1033,7 +1142,8 @@ export class DemoPanel {
 		try {
 			if (this.dictation.recording) await this.dictation.stop();
 			else {
-				this.speechBase = (this.el("demo-prompt") as HTMLTextAreaElement).value.trim();
+				this.speechTarget = target;
+				this.speechBase = target.value.trim();
 				await this.dictation.start();
 			}
 		} catch (error) {
@@ -1090,6 +1200,9 @@ export class DemoPanel {
 		(this.el("demo-save") as HTMLButtonElement).disabled = true;
 		(this.el("demo-mcp") as HTMLButtonElement).disabled = true;
 		this.el("demo-activity").replaceChildren();
+		this.el("demo-inspections").replaceChildren();
+		this.speechTarget = null;
+		this.lastInspection = null;
 		this.el("demo-violins").replaceChildren();
 		this.renderList();
 		this.drawOverlay();

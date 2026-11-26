@@ -12,6 +12,10 @@ events or the embedding. New lasso analyses capture the selected sample; saved
 selections retain their original sample scope. Group/population display filters do
 not constrain statistics. The interface identifies the companion
 as pre-compensated and does not claim that controls or cleanup history are verified.
+Reference-population counts are omitted, and reference-based analyses reject, when
+any eligible sample has skipped gates, a missing reference gate, or ambiguous gate
+names. This conservative policy may reject usable populations; it does not treat
+unknown membership as zero. Empty sample intersections remain valid empty selections.
 
 ## Automatic GitHub deployment
 

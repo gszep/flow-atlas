@@ -35,6 +35,7 @@ export interface SampleInfo {
 	skippedGateCount: number | null;
 	gateCounts: Array<{
 		name: string;
+		isLeaf: boolean;
 		count: number;
 		expected: number | null;
 		sourceReportedCount: number | null;
@@ -237,7 +238,8 @@ export async function loadWorkspace(
 
 	for (let si = 0; si < parsed.length; si++) {
 		const { s, f, offset, sourceCount, sourceOffset } = parsed[si] as (typeof parsed)[number];
-		if (f.eventCount === 0 && sampling) {
+		const leafIds = new Set(leafGates(s).map((gate) => gate.id));
+		if (f.eventCount === 0) {
 			sampleInfos.push({
 				name: s.name,
 				basename: s.basename,
@@ -249,6 +251,7 @@ export async function loadWorkspace(
 				skippedGateCount: null,
 				gateCounts: s.gates.map((gate) => ({
 					name: gate.name,
+					isLeaf: leafIds.has(gate.id),
 					count: 0,
 					expected: null,
 					sourceReportedCount: gate.count,
@@ -313,6 +316,7 @@ export async function loadWorkspace(
 			skippedGateCount: r.skipped.length,
 			gateCounts: r.counts.map((c) => ({
 				name: c.gate.name,
+				isLeaf: leafIds.has(c.gate.id),
 				count: c.count,
 				expected: sampling ? null : c.expected,
 				sourceReportedCount: c.expected,

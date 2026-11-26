@@ -4,6 +4,12 @@ Append-only. Each entry: what was decided, why, and what evidence it rests on. M
 **measured** (we ran it), **verified** (primary source read), or **unverified** (secondary source only).
 Earlier decisions in `HANDOFF.md` remain in force unless superseded here.
 
+## 2026-11-26 — Human verification is the improvement loop
+
+**Decision:** put dictation and the evidence for each answer before manual selection. Keep a reviewer’s correction separate from the model answer, reference annotations and measurements. Make explicitly reviewed metadata counts replayable against the next version, offline; never infer a human verdict or promote a candidate automatically. Files stay with the reviewer unless they choose to share them. Keep expert-held-out cases separate from development reviews.
+
+**Measured:** synthetic tests exercise rare counts, ambiguous names, incomplete coverage, incorrect expected counts and non-scorable prose. **Unverified:** improved expert accuracy, physical-microphone quality and generalization to independent biological datasets. No model retraining or autonomous biological experimentation is implemented.
+
 ## 2026-11-26 — Sample-scoped exploratory selections and explicit candidate pipeline
 
 **Decision:** new lasso selections and agent inspections/proposals capture the
@@ -12,7 +18,11 @@ their original scope; group/population display filters still do not constrain
 statistics. The scope and eligible-sample denominator are explicit; no patient
 identity is inferred. Sample display remains enforced when saved layers highlight
 cells. Workspace gate omissions are surfaced, including on cache restore; a skipped
-gate is never presented as a verified negative population.
+gate is never presented as a verified negative population. Reference-population
+counts are null and reference analyses reject when an eligible nonempty sample has
+any skipped gate, no matching evaluated leaf, or ambiguous matching names. This is
+deliberately conservative, not a claim that every unrelated skipped gate affects
+that particular population.
 
 An experimental local host example connects one explicitly identified FCS input,
 operator-supplied matrix/mapping and Time hypothesis, all-event compensated export,

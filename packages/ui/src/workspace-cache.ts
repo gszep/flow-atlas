@@ -154,6 +154,7 @@ export function validCacheMetadata(
 			!sample.gateCounts.every(
 				(gate) =>
 					typeof gate.name === "string" &&
+					typeof gate.isLeaf === "boolean" &&
 					Number.isSafeInteger(gate.count) &&
 					gate.count >= 0 &&
 					gate.count <= sample.count,

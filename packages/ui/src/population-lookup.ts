@@ -6,7 +6,8 @@ export interface ReferencePopulation {
 	id: string;
 	index: number;
 	name: string;
-	count: number;
+	/** Null means the workspace did not completely evaluate this population. */
+	count: number | null;
 }
 export interface PopulationTarget {
 	id: string;
@@ -15,12 +16,15 @@ export interface PopulationTarget {
 	named?: DemoPopulation;
 	reference?: ReferencePopulation;
 }
-export function referencePopulations(names: string[], counts: number[]): ReferencePopulation[] {
+export function referencePopulations(
+	names: string[],
+	counts: Array<number | null>,
+): ReferencePopulation[] {
 	return names.map((name, index) => ({
 		id: `ref:${index}`,
 		index,
 		name,
-		count: counts[index] ?? 0,
+		count: counts[index] ?? null,
 	}));
 }
 export function resolvePopulation(

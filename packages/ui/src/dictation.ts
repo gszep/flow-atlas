@@ -33,6 +33,9 @@ export class Dictation {
 	get recording(): boolean {
 		return this.current?.state === "recording";
 	}
+	get busy(): boolean {
+		return this.current !== undefined;
+	}
 
 	private active(s: Session): boolean {
 		return this.current === s;

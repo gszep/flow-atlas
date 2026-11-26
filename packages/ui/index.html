@@ -19,7 +19,7 @@
 			<p id="gate-coverage" class="demo-note" role="status"></p>
 			<label>Colour by <select id="colour-by"></select></label>
 			<label>Marker size <input id="size" type="range" min="0.5" max="6" step="0.1" value="1.5" /></label>
-			<details><summary>Reference populations and samples</summary><p class="demo-note">These group and population controls filter the display only; they do not limit statistics.</p><div id="legend"></div></details>
+			<details><summary>Reference populations and samples</summary><p class="demo-note">These group and population controls filter the display only; they do not limit statistics. Counts are omitted when reference-gate coverage is incomplete or ambiguous.</p><div id="legend"></div></details>
 		</section>
 	</aside>
 	<main id="map" aria-label="Publication event map" aria-busy="true">
@@ -30,6 +30,8 @@
 </div>
 <div id="loading-overlay">
 	<div class="loading-card">
+		<h1>FlowAtlas · Ask the data</h1>
+		<p>Once the map is ready, dictate a question, inspect the evidence and tell FlowAtlas what it missed.</p>
 		<p><a href="./inventory.html">Read the human data inventory</a></p>
 		<p id="status" role="status" aria-live="polite" aria-atomic="true">Loading dataset…</p>
 		<progress id="download-progress" max="100" aria-label="Publication download progress"></progress>

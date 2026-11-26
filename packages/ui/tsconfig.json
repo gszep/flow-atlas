@@ -5,6 +5,7 @@
 		"declaration": false,
 		"declarationMap": false,
 		"noEmit": true,
+		"allowImportingTsExtensions": true,
 		"module": "ESNext",
 		"moduleResolution": "Bundler",
 		"lib": ["ES2023", "DOM", "DOM.Iterable"],

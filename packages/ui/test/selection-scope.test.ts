@@ -40,6 +40,9 @@ describe("sample selection snapshots", () => {
 			],
 		};
 		expect(scopeToSample(scoped, 1)).toEqual(scoped);
+		const different = scopeToSample(scoped, 0);
+		expect(selectionScope(different, ["one", "two"])).toBe("No overlapping samples");
+		expect(selectionSampleTotal(different, [100, 20])).toBe(0);
 		const union: SelectionSpec = {
 			kind: "union",
 			selections: [scoped, { kind: "samples", indices: [0, 1] }],

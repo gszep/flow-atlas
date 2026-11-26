@@ -121,21 +121,36 @@ it("GPU selections cover bounded windows, nested label words, missing values, po
 				name: String(i),
 				basename: String(i),
 				offset: 0,
-				count: 0,
+				count: i === 0 ? n - 2 : i === 1 || i === 65 ? 1 : 0,
 				sourceCount: 0,
 				sourceOffset: 0,
 				groups: [],
 				skippedGateCount: 0,
-				gateCounts: [],
+				gateCounts: Array.from({ length: 35 }, (_, gate) => ({
+					name: `Population ${gate}`,
+					count: 0,
+					isLeaf: true,
+				})),
 			})),
 			populations: Array.from({ length: 35 }, (_, i) => `Population ${i}`),
 		};
 		const engine = new SelectionEngine(device, ws, 128 * 1024 ** 2);
 		const reference: SelectionSpec = { kind: "reference", population: 33 };
 		const scoped = intersectSelections(reference, { kind: "samples", indices: [1] });
+		const firstSample = ws.samples[0];
+		if (!firstSample) throw new Error("Missing test sample");
 		expect((await engine.analyze(scoped)).count).toBe(1);
+		firstSample.skippedGateCount = 1;
+		await expect(engine.analyze(reference)).rejects.toThrow(/coverage is incomplete/);
+		expect((await engine.analyze(scoped)).count).toBe(1);
+		expect(
+			(await engine.analyze(intersectSelections(reference, { kind: "samples", indices: [] })))
+				.count,
+		).toBe(0);
+		firstSample.skippedGateCount = 0;
 		expect((await engine.analyze({ kind: "samples", indices: [0, 1, 65] })).count).toBe(n);
-		for (const indices of [[], [-1], [66], [0.5], [NaN]])
+		expect((await engine.analyze({ kind: "samples", indices: [] })).count).toBe(0);
+		for (const indices of [[-1], [66], [0.5], [NaN]])
 			await expect(engine.analyze({ kind: "samples", indices })).rejects.toThrow(
 				"Unknown sample index",
 			);

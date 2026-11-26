@@ -12,6 +12,13 @@ const refs = referencePopulations(
 	),
 	Array(23).fill(100),
 );
+it("keeps incomplete and absent reference counts unknown, not zero", () => {
+	expect(referencePopulations(["a", "b", "c"], [null, 0])).toMatchObject([
+		{ count: null },
+		{ count: 0 },
+		{ count: null },
+	]);
+});
 it("every advertised CD8 reference is inspectable by canonical id and legacy index", () => {
 	for (const index of [18, 19, 20, 21]) {
 		const reference = refs[index] as (typeof refs)[number];

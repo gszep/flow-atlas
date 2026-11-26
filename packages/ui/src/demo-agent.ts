@@ -6,6 +6,8 @@ export type AgentEvent = {
 	name?: string;
 	id?: string;
 	details?: string;
+	/** Only text from an end_turn response, never intermediate tool narration. */
+	final?: boolean;
 };
 
 type Invoke = (name: string, input: unknown, signal: AbortSignal) => Promise<unknown>;
@@ -300,7 +302,7 @@ export class DemoAgent {
 				turn.push({ role: "assistant", content });
 				fit(); // Reject oversized/malformed responses before any side effects.
 				for (const block of content) {
-					if (block.type === "text") emit({ type: "text", text: block.text });
+					if (block.type === "text") emit({ type: "text", text: block.text, final: !tools.length });
 				}
 				if (!tools.length) {
 					this.check(epoch, controller);
@@ -313,7 +315,13 @@ export class DemoAgent {
 				for (const tool of tools) {
 					this.check(epoch, controller);
 					calls++;
-					emit({ type: "tool-call", name: tool.name, id: tool.id, text: `Calling ${tool.name}.` });
+					emit({
+						type: "tool-call",
+						name: tool.name,
+						id: tool.id,
+						text: `Calling ${tool.name}.`,
+						details: JSON.stringify(tool.input).slice(0, AGENT_EVENT_TEXT_LIMIT),
+					});
 					let result: ResultBlock;
 					try {
 						const output = await invoke(tool.name, tool.input, controller.signal);

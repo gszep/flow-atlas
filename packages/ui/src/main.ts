@@ -13,6 +13,7 @@ import {
 	loadPublicationManifest,
 	PUBLICATION_EMBED_OPTIONS,
 } from "./publication.js";
+import { referenceCoverage } from "./reference-coverage.js";
 import { renderBatches } from "./render-budget.js";
 import { PointRenderer } from "./renderer.js";
 import { sampleVisible as isSampleVisible } from "./sample-filter.js";
@@ -354,10 +355,6 @@ async function main() {
 		};
 		const legend = $("legend");
 		legend.replaceChildren();
-		const counts = new Map<string, number>();
-		for (const sample of ws.samples)
-			for (const population of sample.gateCounts)
-				counts.set(population.name, (counts.get(population.name) ?? 0) + population.count);
 		const section = (
 			title: string,
 			items: string[],
@@ -435,7 +432,7 @@ async function main() {
 			(_, i, value) => {
 				if (i < popColors.length) popColors[i] = value;
 			},
-			(name) => counts.get(name),
+			(name) => referenceCoverage(ws?.samples ?? [], name) ?? undefined,
 		);
 		for (const [title, items] of [
 			["Conditions", ws.conditions],

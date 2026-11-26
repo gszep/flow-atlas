@@ -1,4 +1,6 @@
 import { createStorage, readback, type Window, windows } from "@flow-atlas/compute";
+import { DemoToolError } from "./demo-tool-errors.js";
+import { eligibleSamples, hasKnownReferenceCoverage } from "./reference-coverage.js";
 import distributionSource from "./selection-distribution.wgsl?raw";
 import highlightSource from "./selection-highlight.wgsl?raw";
 import membershipSource from "./selection-membership.wgsl?raw";
@@ -118,7 +120,6 @@ export function validateSelectionSpec(
 	else if (spec.kind === "samples") {
 		if (
 			!Array.isArray(spec.indices) ||
-			spec.indices.length === 0 ||
 			spec.indices.some((id) => !Number.isInteger(id) || id < 0 || id >= samples)
 		)
 			throw new Error("Unknown sample index");
@@ -294,6 +295,18 @@ export class SelectionEngine {
 			this.workspace.populations.length,
 			this.workspace.samples.length,
 		);
+		if (
+			!hasKnownReferenceCoverage(
+				spec,
+				this.workspace.populations,
+				this.workspace.samples,
+				eligibleSamples(spec),
+			)
+		)
+			throw new DemoToolError(
+				"reference_incomplete",
+				"Reference population coverage is incomplete for the selected samples; counts are unknown.",
+			);
 		if (
 			clauses(spec)
 				.flat()

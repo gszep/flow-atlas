@@ -2,15 +2,12 @@
 
 ## Walkthrough
 
-1. Open the publication map. Existing full-data caching and live point navigation remain.
-2. Choose **Lasso**, draw a region, and inspect the twenty channel distributions.
-3. Name the selection and save it. Original channel identifiers appear alongside marker names.
-4. The in-page agent connects automatically with a bounded guest session. No access
-   code, private launch link or model-provider login is required.
-5. Type or dictate a request. Dictation is editable and is never automatically submitted.
-   Ask the agent to compare populations, create candidates or propose a refinement.
-6. Inspect the real tool activity and the new population cards. Hover/click to highlight
-   cells and inspect distributions; rename, accept or remove suggestions.
+1. Open the publication map. In **Ask the data**, dictate or type “How many events are in each sample?” Stop dictation, edit if needed and press **Ask**. No lasso or provider login is required.
+2. Open **Workspace evidence** for the sample-by-sample numbers. **Count reference NAME** uses the selected scope; **Compare reference NAME** compares samples. Both require a unique imported reference name. Missing coverage is unknown, not a negative finding. These queries use loaded metadata and do not call the model.
+3. Ask an open-ended follow-up to use the configured agent. A response card separates the final answer from browser tool arguments, results and errors, including turns with no tool calls. Previews are bounded, not complete operation receipts.
+4. Open **Check or correct this answer**. Dictate or type a note; **Use note in follow-up** creates an editable question, not an automatic submission. To keep or replay an assessment, explicitly download the review JSON. Reviews are not automatically collected or used for training.
+5. Lasso, map navigation, channel distributions and human naming are still available for inspection. Existing population protections apply.
+6. Review files can contain questions, sample names, metadata, tool previews and notes. Keep them private; reviewed development cases are not an independent held-out evaluation.
 7. **Reset demo** clears population/conversation state, stops work/recording and revokes
    the shared session. Reload creates fresh local demo state. **Clear cached data and
    reload** also clears only FlowAtlas's owned IndexedDB entries after pending writes drain.
@@ -19,6 +16,16 @@ Human and accepted populations cannot be renamed or removed by agent tools. Refi
 are new selections with an explicit parent reference. These exploratory embedding/display
 selections are not raw-channel gates, and suggested biological names are not validated identities.
 Reference selections use existing imported WSP annotations; their reuse is not de novo discovery.
+
+## Using a human correction to check the next version
+
+For a measured count table, **Download as checked** makes its counts explicit expectations. To record a disagreement, add a note and optionally specify a sample and expected whole count or `unknown`, then **Download correction**. On a candidate checkout (Node 24), run:
+
+```sh
+node packages/ui/scripts/replay-review.mjs /private/path/to/review.json
+```
+
+The runner executes the current metadata-question code against the saved input summary. It checks each asserted sample count and exits 0 on agreement, 1 on discrepancy, or 2 for a malformed/non-scorable case. It never contacts a model, processes event files, executes instructions from a review, or changes the checkout. Prose-only reviews and model interpretations are **not scored**. A passing replay does not test speech recognition, upstream GPU gating, compensation, or phenotype validity. A failed review is a case to investigate, not authority to change the model, gate, or source annotation.
 
 ## Distribution and state contract
 
