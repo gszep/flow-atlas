@@ -364,6 +364,22 @@ async function terminal(service: AnalysisService, jobId: string): Promise<Job> {
 	return job;
 }
 
+// Synchronize on real work in the final source, not time elapsed or an assumed chunk size.
+async function waitForPartialTail(jobId: string, tailId: string) {
+	await vi.waitFor(
+		async () => {
+			const job = (await service.invoke("get_job", { jobId })) as Job;
+			expect(job).toMatchObject({
+				state: "running",
+				progressDetail: { sampleIndex: 2, sampleId: tailId },
+			});
+			expect(job.processedEvents).toBeGreaterThanOrEqual(120);
+			expect(job.processedEvents).toBeLessThan(job.totalEvents as number);
+		},
+		{ timeout: 10_000, interval: 10 },
+	);
+}
+
 async function countsArtifact(jobRoot: string, job: Job): Promise<Result> {
 	const output = job.result as NonNullable<Job["result"]>;
 	const bytes = await readFile(join(jobRoot, output.path));
@@ -393,7 +409,9 @@ type Harness = {
 async function harness(name: string, prefix: string): Promise<Harness> {
 	const root = await mkdtemp(join(tmpdir(), `flow-atlas-${name}-`));
 	roots.push(root);
-	const service = await createAnalysisService({ root, maxChunkBytes: 1024 });
+	// 32 KiB still streams the 60,000-row synthetic tail in 22 GPU chunks. At 1 KiB,
+	// 706 chunks with ten gate readbacks each turn an integrity test into a timing benchmark.
+	const service = await createAnalysisService({ root, maxChunkBytes: 32 * 1024 });
 	services.push(service);
 	const importFile = async (file: string, bytes: Uint8Array): Promise<string> => {
 		await writeFile(join(root, file), bytes);
@@ -424,8 +442,7 @@ let mainReceipt: Result = {};
 
 beforeAll(async () => {
 	({ root, service, ids, importFile } = await harness("batch-counts", "batch"));
-	// Huge uniform tail source: hundreds of small chunks give deterministic mid-run windows
-	// for the mutation test without changing any hand-enumerated count.
+	// Multi-chunk tail gives the integrity test a window after the first two sources finish.
 	ids.D = await importFile("batch-d.fcs", synthetic(filler(60_000, 400), ["PE", "APC", "FSC"]));
 	await writeFile(join(root, "batch-d.fcs"), "source replaced after import");
 }, 60_000);
@@ -647,17 +664,7 @@ describe("batch gate population counts through the analysis service", () => {
 	it("fails without publishing partial artifacts when a later input is mutated mid-run", async () => {
 		const request = batch([{ sampleId: ids.A }, { sampleId: ids.B }, { sampleId: ids.D }]);
 		const submitted = (await service.invoke("start_batch_gate_counts", request)) as Job;
-		// processedEvents > 35 proves A and B completed and the last source is past its
-		// integrity verification, so the mutation below lands mid-stream deterministically.
-		await vi.waitFor(
-			async () => {
-				const job = (await service.invoke("get_job", { jobId: submitted.jobId })) as Job;
-				expect(job.processedEvents ?? 0).toBeGreaterThanOrEqual(120);
-			},
-			{ timeout: 10_000, interval: 10 },
-		);
-		const running = (await service.invoke("get_job", { jobId: submitted.jobId })) as Job;
-		expect(["running", "queued"]).toContain(running.state);
+		await waitForPartialTail(submitted.jobId, ids.D);
 		expect(await readdir(join(root, "outputs"))).not.toContain(submitted.jobId);
 		const snapshot = join(root, ".flow-atlas", "inputs", `${ids.D}.fcs`);
 		await chmod(snapshot, 0o600);
@@ -692,13 +699,7 @@ describe("batch gate population counts through the analysis service", () => {
 		await writeFile(join(root, "batch-e.fcs"), "source replaced after import");
 		const request = batch([{ sampleId: ids.A }, { sampleId: ids.B }, { sampleId: idE }]);
 		const submitted = (await service.invoke("start_batch_gate_counts", request)) as Job;
-		await vi.waitFor(
-			async () => {
-				const job = (await service.invoke("get_job", { jobId: submitted.jobId })) as Job;
-				expect(job.processedEvents ?? 0).toBeGreaterThanOrEqual(120);
-			},
-			{ timeout: 10_000, interval: 10 },
-		);
+		await waitForPartialTail(submitted.jobId, idE);
 		expect(await service.invoke("cancel_job", { jobId: submitted.jobId })).toMatchObject({
 			accepted: true,
 		});

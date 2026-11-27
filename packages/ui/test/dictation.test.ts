@@ -110,15 +110,17 @@ describe("Dictation relay lifecycle", () => {
 		vi.unstubAllGlobals();
 	});
 	async function started() {
+		const socketIndex = Socket.instances.length;
+		const workletIndex = Worklet.instances.length;
 		const promise = client.start();
 		await tick();
-		const socket = Socket.instances[0];
+		const socket = Socket.instances[socketIndex];
 		if (!socket) throw new Error("No socket");
-		expect(Worklet.instances).toHaveLength(1);
+		expect(Worklet.instances).toHaveLength(workletIndex + 1);
 		expect(client.recording).toBe(true);
 		socket.message({ type: "Ready" });
 		await promise;
-		const worklet = Worklet.instances[0];
+		const worklet = Worklet.instances[workletIndex];
 		if (!worklet) throw new Error("No worklet");
 		return { socket, worklet };
 	}
@@ -354,16 +356,10 @@ describe("Dictation relay lifecycle", () => {
 		await tick();
 		socket.message({ type: "Metadata" });
 		expect(await finishing).toBeNull();
-		await startedAgain();
+		await started();
 		const stopped = client.stop();
 		client.cancel();
 		expect(await stopped).toBeNull();
-		async function startedAgain() {
-			const start = client.start();
-			await tick();
-			Socket.instances.at(-1)?.message({ type: "Ready" });
-			await start;
-		}
 	});
 });
 

@@ -12,27 +12,25 @@ gates, trains a SOM, embeds with EmbedSOM and renders on WebGPU. The public demo
 companion, trains the SOM on up to 100,000 events, and projects all events.
 Browser plots are not views of the separate host's analysis receipts or a claim
 of general FlowJo interpretation/biological fidelity.
-The source companion contains 3,885,530 events across 33 FCS files. A centered
-progress bar shows loading; the map retains colour, marker-size and population
-controls. Verified files and computed maps are cached in IndexedDB for subsequent
-visits in the same browser/site. Run metadata remain machine-readable without a
-prose-heavy sidebar.
+The companion contains 3,885,530 events across 33 FCS files. Once loaded, the
+map has one microphone button. [Tap to record, then tap **Stop & ask**](docs/INTERACTIVE_DEMO.md);
+the mic does not wait for transcription to connect. Hold the button or press `/`
+for typing and workspace tools. Verified files and computed maps are cached in IndexedDB.
 Start with [`docs/HANDOFF.md`](docs/HANDOFF.md) and [`docs/decisions.md`](docs/decisions.md); agents read [`AGENTS.md`](AGENTS.md).
 
 ```sh
 pnpm install
 pnpm test          # unit + kernel (Dawn/Node) + parity tests
-pnpm --filter @flow-atlas/ui dev  # local browser UI — drop data/ or open /?oracle
+pnpm --filter @flow-atlas/ui dev  # UI development server
 ```
 
-Requires a WebGPU browser (Chrome/Edge 113+). `?oracle=N` loads the first N oracle FCS files.
+The map requires WebGPU. For the runnable demo with its pinned companion, see
+[Build and stage](docs/PUBLIC_DEMO.md#build-and-stage); query parameters do not select a dataset.
 
 For agent-driven native analysis, use the local studio workflow in
 `packages/host/README.md`. Build, served-version acceptance and rollback are
 documented in `docs/DELIVERY.md`.
 Public demo hosting is documented in [`docs/PUBLIC_DEMO.md`](docs/PUBLIC_DEMO.md).
-The lasso → violin plots → named populations → live agent/dictation walkthrough is in
-[`docs/INTERACTIVE_DEMO.md`](docs/INTERACTIVE_DEMO.md).
 
 ## Packages
 

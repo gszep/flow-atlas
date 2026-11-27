@@ -120,7 +120,7 @@ Omit the publication option only for a code-only package.
 
 Opening the page starts loading without a query parameter or button. Legacy query
 parameters do not change the fixed profile. It uses a 20-by-20 SOM, ten epochs and
-seed 42. A compact event-count badge is visible; detailed computation metadata
+seed 42. The event count is under workspace tools; detailed computation metadata
 remain in the JSON record.
 Wall-clock phase timings are not isolated GPU timestamps, and uninstrumented
 memory/utilization fields remain unknown.
